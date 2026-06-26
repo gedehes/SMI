@@ -95,12 +95,12 @@ def get_smi_custom(ticker_list):
             
             results.append({
                 "ACTIF": ticker, 
-                "SMI %K (k)": round(float(last_calculated['SMI_K']), 2),
-                "SMI %D (d)": round(float(last_calculated['SMI_D']), 2), 
-                "DIFFÉRENCE": round(float(last_calculated['Diff']), 2),
-                "HAUT (W)": round(float(last_calculated['High']), 2),
-                "BAS (W)": round(float(last_calculated['Low']), 2),
-                "CLÔTURE": round(float(last_calculated['Close']), 2)
+                "SMI %K (k)": float(last_calculated['SMI_K']),
+                "SMI %D (d)": float(last_calculated['SMI_D']), 
+                "DIFFÉRENCE": float(last_calculated['Diff']),
+                "HAUT (W)": float(last_calculated['High']),
+                "BAS (W)": float(last_calculated['Low']),
+                "CLÔTURE": float(last_calculated['Close'])
             })
         except Exception:
             continue
@@ -115,17 +115,18 @@ if bouton_scan:
             df_result = get_smi_custom(ma_liste)
             
             if not df_result.empty:
-                # Tri automatique par différence décroissante
-                df_result = df_result.sort_values(by="DIFFÉRENCE", ascending=False)
+                # 1. Tri automatique par différence CROISSANTE (ascending=True)
+                df_result = df_result.sort_values(by="DIFFÉRENCE", ascending=True)
                 
-                # Stylisation des couleurs pour le tableau Streamlit
+                # Stylisation des couleurs pour la colonne DIFFÉRENCE
                 def colorier_diff(val):
                     color = '#118d57' if val >= 0 else '#b71d18'
                     return f'color: {color}; font-weight: bold'
                 
-                df_style = df_result.style.map(colorier_diff, subset=['DIFFÉRENCE'])
+                # 2. Strictement 2 décimales maximum pour TOUTES les colonnes numériques
+                df_style = df_result.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
                 
-                # Affichage du tableau interactif (recherche et tris manuels possibles en 1 clic)
+                # Affichage du tableau interactif
                 st.success("Analyses terminées !")
                 st.dataframe(
                     df_style, 
