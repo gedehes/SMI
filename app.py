@@ -28,7 +28,7 @@ def aplatir_donnees(df):
         df.columns = df.columns.get_level_values(0)
     return df
 
-# --- CALCUL DU SMI REVISITÉ (CONFIGURATION D'AVANT-HIER) ---
+# --- CALCUL DU SMI REVISITÉ (CONFIGURATION 14, 4, 1, 14, EMA) ---
 def calculer_smi_watchlist(ticker_list):
     results = []
     
@@ -45,11 +45,11 @@ def calculer_smi_watchlist(ticker_list):
             if not all(col in df.columns for col in ['High', 'Low', 'Close']):
                 continue
                 
-            if len(df) < 40: # Augmenté car le lissage à 25 demande plus d'historique initial
+            if len(df) < 30: 
                 continue
 
-            # --- FORMULE DE WILLIAM BLAU (13, 25, 2, 9) ---
-            période = 13
+            # --- CONFIGURATION SOUHAITÉE : 14, 4, 1, 14 (EMA) ---
+            période = 14
             df['LL'] = df['Low'].rolling(window=période).min()
             df['HH'] = df['High'].rolling(window=période).max()
             df['HL_Center'] = (df['HH'] + df['LL']) / 2
@@ -58,20 +58,23 @@ def calculer_smi_watchlist(ticker_list):
             df['D'] = df['Close'] - df['HL_Center']
             df['HL_Range'] = df['HH'] - df['LL']
             
-            # Double lissage de la distance (D) : 25 puis 2
-            df['D_Smooth1'] = df['D'].ewm(span=25, adjust=False).mean()
-            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=2, adjust=False).mean()
+            # Premier lissage de la distance (span=4)
+            df['D_Smooth1'] = df['D'].ewm(span=4, adjust=False).mean()
+            # Second lissage (span=1 -> neutre, conserve la valeur actuelle)
+            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=1, adjust=False).mean()
             
-            # Double lissage du Range (HL_Range) : 25 puis 2
-            df['Range_Smooth1'] = df['HL_Range'].ewm(span=25, adjust=False).mean()
-            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=2, adjust=False).mean()
+            # Premier lissage du Range (span=4)
+            df['Range_Smooth1'] = df['HL_Range'].ewm(span=4, adjust=False).mean()
+            # Second lissage du Range (span=1)
+            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=1, adjust=False).mean()
             
             # Éviter les divisions par zéro
             df['Range_Smooth2'] = df['Range_Smooth2'].apply(lambda x: x if x != 0 else 0.00001)
             
             # Calcul des lignes %K et %D du SMI
             df['SMI_K'] = 100 * (df['D_Smooth2'] / (0.5 * df['Range_Smooth2']))
-            df['SMI_D'] = df['SMI_K'].ewm(span=9, adjust=False).mean()
+            # Ligne de Signal EMA à 14 périodes
+            df['SMI_D'] = df['SMI_K'].ewm(span=14, adjust=False).mean()
             df['Diff'] = df['SMI_K'] - df['SMI_D']
             
             # --- EXTRACTION DES DERNIÈRES VALEURS RÉSULTATS ---
