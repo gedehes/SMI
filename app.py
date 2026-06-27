@@ -4,7 +4,7 @@ import pandas as pd
 import datetime
 import os
 
-# Configuration de la page pour le mobile
+# Configuration de la page optimisée pour mobile
 st.set_page_config(page_title="Scanner SMI Custom", layout="wide")
 
 FILENAME = "mes_tickers.txt"
@@ -13,7 +13,7 @@ def charger_tickers():
     if os.path.exists(FILENAME):
         with open(FILENAME, "r") as f:
             return [line.strip().upper() for line in f if line.strip()]
-    return ["GOOG", "MU", "MSFT"] # Tickers par défaut si le fichier n'existe pas
+    return ["GOOG", "MU", "MSFT"]
 
 def sauvegarder_tickers(liste_str):
     tickers = [t.strip().upper() for t in liste_str.split() if t.strip()]
@@ -22,26 +22,7 @@ def sauvegarder_tickers(liste_str):
             f.write(f"{ticker}\n")
     return tickers
 
-# --- INTERFACE STREAMLIT ---
-st.title("📊 Scanner SMI Personnel (14, 4, 1, 14, EMA)")
-
-# Gestion de la liste dans la barre latérale (Sidebar)
-st.sidebar.header("⚙️ Configuration")
-tickers_actuels = charger_tickers()
-tickers_texte = st.sidebar.text_area(
-    "Modifier la liste (séparés par un espace ou retour à la ligne) :",
-    value=" ".join(tickers_actuels),
-    height=200
-)
-
-# Sauvegarde automatique dès que la liste change
-ma_liste = sauvegarder_tickers(tickers_texte)
-st.sidebar.write(f"📋 **{len(ma_liste)} actifs configurés.**")
-
-# Bouton principal de scan
-bouton_scan = st.button("🚀 Lancer le Scan Hebdomadaire", use_container_width=True)
-
-# --- MOTEUR DE CALCUL ---
+# --- MOTEUR DE CALCUL UNIFIÉ ---
 def get_smi_custom(ticker_list):
     results = []
     today = datetime.date.today()
@@ -71,7 +52,7 @@ def get_smi_custom(ticker_list):
             else:
                 df_final = df_wk.copy()
             
-            if len(df_final) < 14: continue
+            if len(df_final) < 15: continue # Sécurité pour avoir au moins 2 périodes calculées
             
             # Formule SMI (14, 4, 1, 14, EMA)
             rolling_high = df_final['High'].rolling(14).max()
@@ -91,13 +72,22 @@ def get_smi_custom(ticker_list):
             df_final['SMI_D'] = df_final['SMI_K'].ewm(span=14, adjust=False).mean()
             df_final['Diff'] = df_final['SMI_K'] - df_final['SMI_D']
             
+            # Extraction de la période actuelle (-1) et précédente (-2)
             last_calculated = df_final.iloc[-1]
+            prev_calculated = df_final.iloc[-2]
+            
+            last_k = float(last_calculated['SMI_K'])
+            prev_k = float(prev_calculated['SMI_K'])
+            
+            # Calcul de la tendance du Stochastic Momentum
+            tendance = "🔼 Croissant" if last_k >= prev_k else "🔽 Décroissant"
             
             results.append({
                 "ACTIF": ticker, 
-                "SMI %K (k)": float(last_calculated['SMI_K']),
+                "SMI %K (k)": last_k,
                 "SMI %D (d)": float(last_calculated['SMI_D']), 
                 "DIFFÉRENCE": float(last_calculated['Diff']),
+                "TENDANCE": tendance,
                 "HAUT (W)": float(last_calculated['High']),
                 "BAS (W)": float(last_calculated['Low']),
                 "CLÔTURE": float(last_calculated['Close'])
@@ -106,33 +96,77 @@ def get_smi_custom(ticker_list):
             continue
     return pd.DataFrame(results)
 
-# --- ACTION ET AFFICHAGE ---
-if bouton_scan:
-    if not ma_liste:
-        st.warning("⚠️ Veuillez ajouter au moins un ticker dans la liste.")
-    else:
-        with st.spinner("Analyse et synchronisation des données en cours..."):
-            df_result = get_smi_custom(ma_liste)
-            
-            if not df_result.empty:
-                # 1. Tri automatique par différence CROISSANTE (ascending=True)
-                df_result = df_result.sort_values(by="DIFFÉRENCE", ascending=True)
+# --- FONCTIONS DE STYLISATION DE COULEUR ---
+def colorier_diff(val):
+    color = '#118d57' if val >= 0 else '#b71d18'
+    return f'color: {color}; font-weight: bold'
+
+def colorier_tendance(val):
+    color = '#118d57' if "Croissant" in str(val) else '#b71d18'
+    return f'color: {color}; font-weight: bold'
+
+
+# --- ARCHITECTURE DE L'INTERFACE WEB ---
+st.title("📊 Application SMI Globale (14, 4, 1, 14, EMA)")
+
+# Création des deux onglets
+tab1, tab2 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash + Tendance"])
+
+# --- ONGLET 1 : LISTE ENREGISTRÉE ---
+with tab1:
+    st.subheader("Gestion de votre Watchlist Permanente")
+    tickers_actuels = charger_tickers()
+    
+    tickers_texte = st.text_area(
+        "Modifier votre liste permanente (séparés par un espace) :",
+        value=" ".join(tickers_actuels),
+        key="txt_tab1"
+    )
+    liste_tab1 = sauvegarder_tickers(tickers_texte)
+    st.caption(f"Actifs sauvegardés : {len(liste_tab1)}")
+    
+    if st.button("🚀 Lancer le Scan de la Liste", key="btn_tab1", use_container_width=True):
+        with st.spinner("Analyse de votre liste en cours..."):
+            df_res = get_smi_custom(liste_tab1)
+            if not df_res.empty:
+                df_res = df_res.sort_values(by="DIFFÉRENCE", ascending=True)
+                # On retire la colonne tendance pour cet onglet afin de garder l'affichage épuré demandé initialement
+                df_res_clean = df_res.drop(columns=["TENDANCE"])
                 
-                # Stylisation des couleurs pour la colonne DIFFÉRENCE
-                def colorier_diff(val):
-                    color = '#118d57' if val >= 0 else '#b71d18'
-                    return f'color: {color}; font-weight: bold'
-                
-                # 2. Strictement 2 décimales maximum pour TOUTES les colonnes numériques
-                df_style = df_result.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
-                
-                # Affichage du tableau interactif
-                st.success("Analyses terminées !")
-                st.dataframe(
-                    df_style, 
-                    use_container_width=True, 
-                    hide_index=True,
-                    height=min(40 * len(df_result) + 40, 600)
-                )
+                df_style = df_res_clean.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
+                st.dataframe(df_style, use_container_width=True, hide_index=True)
             else:
-                st.error("Aucune donnée n'a pu être récupérée pour les tickers configurés.")
+                st.error("Aucune donnée disponible.")
+
+# --- ONGLET 2 : ANALYSE FLASH + TENDANCE ---
+with tab2:
+    st.subheader("Analyse Instantanée avec Tendance de Période")
+    st.markdown("_Saisissez des tickers temporaires pour une analyse immédiate sans modifier votre liste principale._")
+    
+    tickers_flash_texte = st.text_area(
+        "Entrez les tickers à analyser (ex: AAPL NVDA TSLA) :",
+        value="AAPL NVDA TSLA",
+        key="txt_tab2"
+    )
+    
+    liste_tab2 = [t.strip().upper() for t in tickers_flash_texte.split() if t.strip()]
+    
+    if st.button("🔍 Lancer l'Analyse Flash + Tendance", key="btn_tab2", use_container_width=True):
+        if not liste_tab2:
+            st.warning("⚠️ Veuillez entrer au moins un ticker.")
+        else:
+            with st.spinner("Calcul des indicateurs et de la dynamique de tendance..."):
+                df_res = get_smi_custom(liste_tab2)
+                if not df_res.empty:
+                    # Tri par différence Croissante
+                    df_res = df_res.sort_values(by="DIFFÉRENCE", ascending=True)
+                    
+                    # Application du double formatage de couleur (Différence et Tendance)
+                    df_style = (df_res.style.format(precision=2)
+                                .map(colorier_diff, subset=['DIFFÉRENCE'])
+                                .map(colorier_tendance, subset=['TENDANCE']))
+                    
+                    st.success("Analyse dynamique terminée !")
+                    st.dataframe(df_style, use_container_width=True, hide_index=True)
+                else:
+                    st.error("Impossible de récupérer les données pour ces actifs.")
