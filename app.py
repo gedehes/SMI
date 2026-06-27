@@ -2,11 +2,10 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import datetime
 import os
 
-# Configuration de la page optimisée pour mobile
-st.set_page_config(page_title="Scanner SMI Custom", layout="wide")
+# Configuration de la page
+st.set_page_config(page_title="Scanner SMI", layout="wide")
 
 FILENAME = "mes_tickers.txt"
 
@@ -14,7 +13,7 @@ def charger_tickers():
     if os.path.exists(FILENAME):
         with open(FILENAME, "r") as f:
             return [line.strip().upper() for line in f if line.strip()]
-    return ["GOOG", "MU", "MSFT"]
+    return ["AAPL", "MSFT", "GOOG", "MU"]
 
 def sauvegarder_tickers(liste_str):
     tickers = [t.strip().upper() for t in liste_str.split() if t.strip()]
@@ -23,167 +22,95 @@ def sauvegarder_tickers(liste_str):
             f.write(f"{ticker}\n")
     return tickers
 
-# --- NETTOYAGE SÉCURISÉ DES COLONNES MULTI-INDEX ---
-def determiner_et_aplatir_colonnes(df):
+# --- NETTOYAGE DES COLONNES MULTI-INDEX ---
+def aplatir_donnees(df):
+    # Si yfinance retourne un MultiIndex (cas fréquent selon les versions), on extrait le premier niveau
     if isinstance(df.columns, pd.MultiIndex):
-        if 'Close' in df.columns.get_level_values(0):
-            df.columns = df.columns.get_level_values(0)
-        elif 'Close' in df.columns.get_level_values(1):
-            df.columns = df.columns.get_level_values(1)
+        df.columns = df.columns.get_level_values(0)
     return df
 
-# --- MOTEUR DE CALCUL CENTRALISÉ ---
-def calculer_indicateurs_globaux(ticker_list):
+# --- CALCUL DU SMI & PRIX ---
+def calculer_smi_watchlist(ticker_list):
     results = []
-    today = datetime.date.today()
-    monday_this_week = today - datetime.timedelta(days=today.weekday())
     
     for ticker in ticker_list:
         try:
-            # 1. Téléchargement avec auto_adjust=True pour la cohérence des prix et du SMI
-            df_wk = yf.download(ticker, period="5y", interval="1wk", progress=False, auto_adjust=True)
-            if df_wk.empty: continue
-            df_wk = determiner_et_aplatir_colonnes(df_wk)
-            
-            df_d = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=True)
-            if df_d.empty: continue
-            df_d = determiner_et_aplatir_colonnes(df_d)
-            
-            # Reconstruction de la semaine courante à partir des données Daily
-            this_week_daily = df_d[df_d.index.date >= monday_this_week]
-            
-            if not this_week_daily.empty:
-                w_open = float(this_week_daily['Open'].iloc[0])
-                w_high = float(this_week_daily['High'].max())
-                w_low = float(this_week_daily['Low'].min())
-                w_close = float(this_week_daily['Close'].iloc[-1])
+            # Téléchargement en Hebdomadaire (Weekly)
+            df = yf.download(ticker, period="3y", interval="1wk", progress=False)
+            if df.empty:
+                continue
                 
-                # On filtre l'historique pour enlever l'ancienne ligne incomplète et injecter la propre
-                df_wk = df_wk[df_wk.index.date < monday_this_week].copy()
-                current_week_row = pd.DataFrame({
-                    'Open': [w_open], 'High': [w_high], 'Low': [w_low], 'Close': [w_close]
-                }, index=[pd.Timestamp(monday_this_week)])
-                df_final = pd.concat([df_wk, current_week_row]).sort_index()
-            else:
-                df_final = df_wk.copy().sort_index()
+            df = aplatir_donnees(df)
             
-            if len(df_final) < 60: continue
+            # Sécurité pour s'assurer que les colonnes nécessaires existent
+            if not all(col in df.columns for col in ['High', 'Low', 'Close']):
+                continue
+                
+            if len(df) < 20: 
+                continue
+
+            # --- FORMULE STANDARD DU STOCHASTIC MOMENTUM INDEX (SMI) ---
+            # Paramètres classiques : Période 14, Premier lissage 3, Second lissage 3
+            période = 14
+            df['LL'] = df['Low'].rolling(window=période).min()
+            df['HH'] = df['High'].rolling(window=période).max()
+            df['HL_Center'] = (df['HH'] + df['LL']) / 2
             
-            # --- FORMULE DE BASE STRICTE DU SMI (14, 4, 1, 14, EMA) ---
-            rolling_high_14 = df_final['High'].rolling(14).max()
-            rolling_low_14 = df_final['Low'].rolling(14).min()
-            mid_14 = (rolling_high_14 + rolling_low_14) / 2
-            diff_14 = df_final['Close'] - mid_14
-            hl_range_14 = rolling_high_14 - rolling_low_14
+            # Distance du cours par rapport au centre du Range
+            df['D'] = df['Close'] - df['HL_Center']
+            df['HL_Range'] = df['HH'] - df['LL']
             
-            ema1_diff = diff_14.ewm(span=4, adjust=False).mean()
-            ema1_range = hl_range_14.ewm(span=4, adjust=False).mean()
+            # Double lissage de la distance (D)
+            df['D_Smooth1'] = df['D'].ewm(span=3, adjust=False).mean()
+            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=3, adjust=False).mean()
             
-            ema2_diff = ema1_diff.ewm(span=1, adjust=False).mean()
-            ema2_range = ema1_range.ewm(span=1, adjust=False).mean()
-            ema2_range = ema2_range.apply(lambda x: x if x != 0 else 0.00001)
+            # Double lissage du Range (HL_Range)
+            df['Range_Smooth1'] = df['HL_Range'].ewm(span=3, adjust=False).mean()
+            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=3, adjust=False).mean()
             
-            df_final['SMI_K'] = 100 * (ema2_diff / (0.5 * ema2_range))
-            df_final['SMI_D'] = df_final['SMI_K'].ewm(span=14, adjust=False).mean()
-            df_final['Diff'] = df_final['SMI_K'] - df_final['SMI_D']
+            # Éviter les divisions par zéro
+            df['Range_Smooth2'] = df['Range_Smooth2'].apply(lambda x: x if x != 0 else 0.00001)
             
-            # --- CAPTURE DES VALEURS FINALES ---
-            last_row = df_final.iloc[-1]
-            prev_row = df_final.iloc[-2]
+            # Calcul des lignes %K et %D du SMI
+            df['SMI_K'] = 100 * (df['D_Smooth2'] / (0.5 * df['Range_Smooth2']))
+            df['SMI_D'] = df['SMI_K'].ewm(span=10, adjust=False).mean()
+            df['Diff'] = df['SMI_K'] - df['SMI_D']
             
-            close_val = float(last_row['Close'])
-            high_val = float(last_row['High'])
-            low_val = float(last_row['Low'])
+            # --- EXTRACTION DES DERNIÈRES VALEURS RÉSULTATS ---
+            derniere_ligne = df.iloc[-1]
+            ligne_precedente = df.iloc[-2]
             
-            last_k = float(last_row['SMI_K'])
-            last_d = float(last_row['SMI_D'])
-            last_diff = float(last_row['Diff'])
-            prev_k = float(prev_row['SMI_K'])
+            # Extraction explicite des prix sous forme de float simple
+            cloture_actuelle = float(derniere_ligne['Close'])
+            haut_actuel = float(derniere_ligne['High'])
+            bas_actuel = float(derniere_ligne['Low'])
             
-            tendance = "🔼 Croissant" if last_k >= prev_k else "🔽 Décroissant"
+            k_actuel = float(derniere_ligne['SMI_K'])
+            d_actuel = float(derniere_ligne['SMI_D'])
+            diff_actuelle = float(derniere_ligne['Diff'])
+            k_precedent = float(ligne_precedente['SMI_K'])
             
-            # ATR (14) Weekly
-            prev_close = df_final['Close'].shift(1)
-            tr = pd.concat([
-                df_final['High'] - df_final['Low'],
-                (df_final['High'] - prev_close).abs(),
-                (df_final['Low'] - prev_close).abs()
-            ], axis=1).max(axis=1)
-            atr14_series = tr.ewm(alpha=1/14, adjust=False).mean()
-            atr_val = float(atr14_series.iloc[-1])
-            
-            # Ratio Théorique
-            ratio_th_val = (atr_val / close_val * 100) if close_val != 0 else 0
-            
-            # High pr : Valeur la plus haute sur 12 semaines sans compter la dernière (-13 à -1)
-            weeks_before = df_final.iloc[-13:-1]
-            high_pr_val = float(weeks_before['High'].max()) if len(weeks_before) >= 12 else high_val
-            
-            # Ratio : Close / High pr - 1
-            ratio_val = ((close_val / high_pr_val) - 1) * 100 if high_pr_val != 0 else 0
-            
-            # Tenkan Ichimoku (9) en cours
-            tenkan_series = (df_final['High'].rolling(9).max() + df_final['Low'].rolling(9).min()) / 2
-            tenkan_val = float(tenkan_series.iloc[-1])
-            
-            # Tenkan %
-            tenkan_pct_val = ((close_val / tenkan_val) - 1) * 100 if tenkan_val != 0 else 0
-            
-            # Multi-indicateurs K/D et K-D
-            kd_ratio_val = (last_k / last_d) if last_d != 0 else 0
-            kd_diff_val = last_k - last_d
-            
-            # Fonction ADX Lissage authentique de Wilder
-            def calculer_adx(df, p):
-                p_high = df['High'].shift(1)
-                p_low = df['Low'].shift(1)
-                p_close = df['Close'].shift(1)
-                v_tr = pd.concat([df['High'] - df['Low'], (df['High'] - p_close).abs(), (df['Low'] - p_close).abs()], axis=1).max(axis=1)
-                dp = df['High'] - p_high
-                dm = p_low - df['Low']
-                dp = pd.Series(np.where((dp > dm) & (dp > 0), dp, 0), index=df.index)
-                dm = pd.Series(np.where((dm > dp) & (dm > 0), dm, 0), index=df.index)
-                tr_s = v_tr.ewm(alpha=1/p, adjust=False).mean().apply(lambda x: x if x != 0 else 0.00001)
-                dp_s = dp.ewm(alpha=1/p, adjust=False).mean()
-                dm_s = dm.ewm(alpha=1/p, adjust=False).mean()
-                di_p = 100 * (dp_s / tr_s)
-                di_m = 100 * (dm_s / tr_s)
-                di_sum = (di_p + di_m).apply(lambda x: x if x != 0 else 0.00001)
-                v_dx = 100 * ((di_p - di_m).abs() / di_sum)
-                v_adx = v_dx.ewm(alpha=1/p, adjust=False).mean()
-                return float(v_adx.iloc[-1])
-            
-            adx14_val = calculer_adx(df_final, 14)
-            adx7_val = calculer_adx(df_final, 7)
+            # Dynamique de tendance de la ligne %K
+            tendance = "🔼 Croissant" if k_actuel >= k_precedent else "🔽 Décroissant"
             
             results.append({
-                "ACTIF": ticker, 
-                "SMI %K (k)": last_k,
-                "SMI %D (d)": last_d, 
-                "DIFFÉRENCE": last_diff,
+                "ACTIF": ticker,
+                "SMI %K (k)": k_actuel,
+                "SMI %D (d)": d_actuel,
+                "DIFFÉRENCE": diff_actuelle,
                 "TENDANCE": tendance,
-                "HAUT (W)": high_val,
-                "BAS (W)": low_val,
-                "CLÔTURE": close_val,
-                "ATR": atr_val,
-                "Ratio th.": ratio_th_val,
-                "Close": close_val,
-                "High pr": high_pr_val,
-                "Ratio": ratio_val,
-                "Tenkan": tenkan_val,
-                "Tenkan %": tenkan_pct_val,
-                "%K": last_k,
-                "%D": last_d,
-                "K/D": kd_ratio_val,
-                "K-D": kd_diff_val,
-                "ADX14": adx14_val,
-                "ADX7": adx7_val
+                "HAUT (W)": haut_actuel,
+                "BAS (W)": bas_actuel,
+                "CLÔTURE": cloture_actuelle
             })
-        except Exception:
+            
+        except Exception as e:
+            st.error(f"Erreur sur le ticker {ticker} : {str(e)}")
             continue
+            
     return pd.DataFrame(results)
 
-# --- CONFIGURATION STYLISATION DES TABLEAUX ---
+# --- STYLISATION DES TABLEAUX ---
 def colorier_diff(val):
     try:
         color = '#118d57' if float(val) >= 0 else '#b71d18'
@@ -196,93 +123,62 @@ def colorier_tendance(val):
     return f'color: {color}; font-weight: bold'
 
 
-# --- STRUCTURE APPLICATION WEB ---
-st.title("📊 Terminal SMI & Indicateurs Avancés")
+# --- INTERFACE UTILISATEUR STREAMLIT ---
+st.title("📊 Scanner SMI Épuré")
 
-tab1, tab2, tab3 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash + Tendance", "🧬 Dashboard Multi-Indicateurs"])
+tab1, tab2 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash"])
 
-# --- ONGLET 1 : LISTE ENREGISTRÉE ---
+# --- ONGLET 1 : LISTE ENREGISTRÉE (WATCHLIST) ---
 with tab1:
-    st.subheader("Watchlist Permanente")
-    tickers_actuels = charger_tickers()
+    st.subheader("Votre Watchlist")
+    tickers_sauvegardes = charger_tickers()
     
-    tickers_texte = st.text_area(
-        "Modifier votre liste permanente (séparés par un espace) :",
-        value=" ".join(tickers_actuels),
-        key="txt_tab1"
+    entree_texte = st.text_area(
+        "Modifier les actifs de la liste (séparés par un espace) :",
+        value=" ".join(tickers_sauvegardes),
+        key="txt_watchlist"
     )
-    liste_tab1 = sauvegarder_tickers(tickers_texte)
-    st.caption(f"Actifs enregistrés : {len(liste_tab1)}")
+    liste_actifs = sauvegarder_tickers(entree_texte)
     
-    if st.button("🚀 Lancer le Scan de la Liste", key="btn_tab1", use_container_width=True):
-        with st.spinner("Analyse de votre liste en cours..."):
-            df_all = calculer_indicateurs_globaux(liste_tab1)
-            if not df_all.empty:
-                df_tab1 = df_all[["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]].copy()
+    if st.button("🚀 Scanner la Watchlist", key="btn_watchlist", use_container_width=True):
+        with st.spinner("Calcul du SMI hebdomadaire..."):
+            df_res = calculer_smi_watchlist(liste_actifs)
+            if not df_res.empty:
+                # On filtre les colonnes demandées pour l'onglet 1
+                colonnes_tab1 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
+                df_tab1 = df_res[colonnes_tab1].copy()
+                
+                # Tri par DIFFÉRENCE croissante
                 df_tab1 = df_tab1.sort_values(by="DIFFÉRENCE", ascending=True)
                 
+                # Application des styles et affichage
                 df_style = df_tab1.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
                 st.dataframe(df_style, use_container_width=True, hide_index=True)
             else:
-                st.error("Aucune donnée disponible.")
+                st.warning("Aucune donnée n'a pu être récupérée.")
 
-# --- ONGLET 2 : ANALYSE FLASH + TENDANCE ---
+# --- ONGLET 2 : ANALYSE FLASH ---
 with tab2:
-    st.subheader("Analyse Flash Éphémère")
-    tickers_flash_texte = st.text_area(
-        "Entrez les tickers à analyser (ex: AAPL NVDA TSLA) :",
-        value="AAPL NVDA TSLA GOOG",
-        key="txt_tab2"
+    st.subheader("Analyse de Tendance Rapide")
+    entree_flash = st.text_area(
+        "Entrez des tickers temporaires (ex: TSLA NVDA AMD) :",
+        value="TSLA NVDA AMD",
+        key="txt_flash"
     )
-    liste_tab2 = [t.strip().upper() for t in tickers_flash_texte.split() if t.strip()]
+    liste_flash = [t.strip().upper() for t in entree_flash.split() if t.strip()]
     
-    if st.button("🔍 Analyser la Liste Flash", key="btn_tab2", use_container_width=True):
-        if not liste_tab2:
-            st.warning("⚠️ Veuillez entrer au moins un ticker.")
+    if st.button("🔍 Lancer le Scan Flash", key="btn_flash", use_container_width=True):
+        if not liste_flash:
+            st.warning("Veuillez saisir au moins un ticker.")
         else:
-            with st.spinner("Calcul avec dynamique de tendance en cours..."):
-                df_all = calculer_indicateurs_globaux(liste_tab2)
-                if not df_all.empty:
-                    df_tab2 = df_all[["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "TENDANCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]].copy()
+            with st.spinner("Analyse de la tendance SMI..."):
+                df_res_flash = calculer_smi_watchlist(liste_flash)
+                if not df_res_flash.empty:
+                    # Ajout de la colonne TENDANCE pour l'onglet 2
+                    colonnes_tab2 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "TENDANCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
+                    df_tab2 = df_res_flash[colonnes_tab2].copy()
+                    
                     df_tab2 = df_tab2.sort_values(by="DIFFÉRENCE", ascending=True)
                     
-                    df_style = (df_tab2.style.format(precision=2)
-                                .map(colorier_diff, subset=['DIFFÉRENCE'])
-                                .map(colorier_tendance, subset=['TENDANCE']))
-                    st.dataframe(df_style, use_container_width=True, hide_index=True)
-                else:
-                    st.error("Impossible de récupérer les données.")
-
-# --- ONGLET 3 : DASHBOARD MULTI-INDICATEURS ---
-with tab3:
-    st.subheader("Analyse Technique Avancée Globale")
-    
-    tickers_tab3_texte = st.text_area(
-        "Entrez les tickers à étudier pour le grand tableau :",
-        value="GOOG MU MSFT AAPL NVDA",
-        key="txt_tab3"
-    )
-    liste_tab3 = [t.strip().upper() for t in tickers_tab3_texte.split() if t.strip()]
-    
-    if st.button("🧬 Générer le Tableau Multi-Indicateurs", key="btn_tab3", use_container_width=True):
-        if not liste_tab3:
-            st.warning("⚠️ Veuillez entrer au moins un ticker.")
-        else:
-            with st.spinner("Extraction et génération du tableau de synthèse..."):
-                df_all = calculer_indicateurs_globaux(liste_tab3)
-                if not df_all.empty:
-                    # Sélection et ordonnancement strict demandé
-                    colonnes_ordre = [
-                        "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
-                        "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
-                    ]
-                    df_tab3 = df_all[colonnes_ordre].copy()
-                    
-                    # Mise en valeur de la colonne K-D pour repérer la dynamique SMI
-                    df_style = (df_tab3.style.format(precision=2)
-                                .map(colorier_diff, subset=['K-D']))
-                    
-                    st.success("Tableau de synthèse généré !")
-                    st.dataframe(df_style, use_container_width=True, hide_index=True)
-                else:
-                    st.error("Aucune donnée n'a pu être extraite pour cette liste.")
+                    df_style_flash = (df_tab2.style.format(precision=2)
+                
