@@ -28,56 +28,40 @@ def aplatir_donnees(df):
         df.columns = df.columns.get_level_values(0)
     return df
 
-# --- CALCUL DU SMI REVISITÉ (CONFIGURATION 14, 4, 1, 14, EMA) ---
+# --- CALCUL DU SMI POUR LES ONGLETS 1 & 2 (INTOUCHÉ) ---
 def calculer_smi_watchlist(ticker_list):
     results = []
-    
     for ticker in ticker_list:
         try:
-            # Téléchargement en Hebdomadaire (Weekly)
             df = yf.download(ticker, period="3y", interval="1wk", progress=False)
             if df.empty:
                 continue
-                
             df = aplatir_donnees(df)
-            
-            # Sécurité pour s'assurer que les colonnes nécessaires existent
             if not all(col in df.columns for col in ['High', 'Low', 'Close']):
                 continue
-                
             if len(df) < 30: 
                 continue
 
-            # --- CONFIGURATION SOUHAITÉE : 14, 4, 1, 14 (EMA) ---
             période = 14
             df['LL'] = df['Low'].rolling(window=période).min()
             df['HH'] = df['High'].rolling(window=période).max()
             df['HL_Center'] = (df['HH'] + df['LL']) / 2
             
-            # Distance du cours par rapport au centre du Range
             df['D'] = df['Close'] - df['HL_Center']
             df['HL_Range'] = df['HH'] - df['LL']
             
-            # Premier lissage de la distance (span=4)
             df['D_Smooth1'] = df['D'].ewm(span=4, adjust=False).mean()
-            # Second lissage (span=1 -> neutre, conserve la valeur actuelle)
             df['D_Smooth2'] = df['D_Smooth1'].ewm(span=1, adjust=False).mean()
             
-            # Premier lissage du Range (span=4)
             df['Range_Smooth1'] = df['HL_Range'].ewm(span=4, adjust=False).mean()
-            # Second lissage du Range (span=1)
             df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=1, adjust=False).mean()
             
-            # Éviter les divisions par zéro
             df['Range_Smooth2'] = df['Range_Smooth2'].apply(lambda x: x if x != 0 else 0.00001)
             
-            # Calcul des lignes %K et %D du SMI
             df['SMI_K'] = 100 * (df['D_Smooth2'] / (0.5 * df['Range_Smooth2']))
-            # Ligne de Signal EMA à 14 périodes
             df['SMI_D'] = df['SMI_K'].ewm(span=14, adjust=False).mean()
             df['Diff'] = df['SMI_K'] - df['SMI_D']
             
-            # --- EXTRACTION DES DERNIÈRES VALEURS RÉSULTATS ---
             derniere_ligne = df.iloc[-1]
             ligne_precedente = df.iloc[-2]
             
@@ -102,11 +86,117 @@ def calculer_smi_watchlist(ticker_list):
                 "BAS (W)": bas_actuel,
                 "CLÔTURE": cloture_actuelle
             })
-            
         except Exception as e:
             st.error(f"Erreur sur le ticker {ticker} : {str(e)}")
             continue
+    return pd.DataFrame(results)
+
+# --- CALCUL DES INDICATEURS AVANCÉS POUR L'ONGLET 3 ---
+def calculer_indicateurs_techniques_avances(ticker_list):
+    results = []
+    for ticker in ticker_list:
+        try:
+            df = yf.download(ticker, period="3y", interval="1wk", progress=False)
+            if df.empty:
+                continue
+            df = aplatir_donnees(df)
+            if not all(col in df.columns for col in ['High', 'Low', 'Close']):
+                continue
+            if len(df) < 40: # Plus d'historique requis pour stabiliser l'ADX et le High pr (12W)
+                continue
+
+            # 1. Base des prix actuels
+            cloture_actuelle = float(df['Close'].iloc[-1])
             
+            # 2. ATR (14) - Lissage de Wilder
+            df['High_Low'] = df['High'] - df['Low']
+            df['High_ClosePrev'] = (df['High'] - df['Close'].shift(1)).abs()
+            df['Low_ClosePrev'] = (df['Low'] - df['Close'].shift(1)).abs()
+            df['TR'] = df[['High_Low', 'High_ClosePrev', 'Low_ClosePrev']].max(axis=1)
+            df['ATR'] = df['TR'].ewm(alpha=1/14, adjust=False).mean()
+            atr_actuel = float(df['ATR'].iloc[-1])
+            
+            # Calcul : Ratio th.
+            ratio_th = (atr_actuel / cloture_actuelle) * 100
+            
+            # 3. High pr : Plus haut des 12 semaines précédentes (excluant la semaine en cours)
+            high_pr_val = float(df['High'].shift(1).rolling(window=12).max().iloc[-1])
+            
+            # Calcul : Ratio
+            ratio_high = (cloture_actuelle / high_pr_val - 1) * 100
+            
+            # 4. Tenkan (Période 9 d'Ichimoku)
+            df['Tenkan'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
+            tenkan_actuel = float(df['Tenkan'].iloc[-1])
+            
+            # Calcul : Tenkan %
+            tenkan_pct = (cloture_actuelle / tenkan_actuel - 1) * 100
+            
+            # 5. SMI Identique (14, 4, 1, 14)
+            période = 14
+            df['LL'] = df['Low'].rolling(window=période).min()
+            df['HH'] = df['High'].rolling(window=période).max()
+            df['HL_Center'] = (df['HH'] + df['LL']) / 2
+            df['D'] = df['Close'] - df['HL_Center']
+            df['HL_Range'] = df['HH'] - df['LL']
+            
+            df['D_Smooth1'] = df['D'].ewm(span=4, adjust=False).mean()
+            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=1, adjust=False).mean()
+            df['Range_Smooth1'] = df['HL_Range'].ewm(span=4, adjust=False).mean()
+            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=1, adjust=False).mean()
+            df['Range_Smooth2'] = df['Range_Smooth2'].apply(lambda x: x if x != 0 else 0.00001)
+            
+            df['SMI_K'] = 100 * (df['D_Smooth2'] / (0.5 * df['Range_Smooth2']))
+            df['SMI_D'] = df['SMI_K'].ewm(span=14, adjust=False).mean()
+            
+            k_actuel = float(df['SMI_K'].iloc[-1])
+            d_actuel = float(df['SMI_D'].iloc[-1])
+            
+            # Calculs SMI dérivés
+            kd_ratio = k_actuel / d_actuel if d_actuel != 0 else np.nan
+            kd_diff = k_actuel - d_actuel
+
+            # 6. Fonction ADX avec lissage Wilder standard (alpha=1/N)
+            def calculer_adx_w(data, N, smoothing_N):
+                plus_dm = data['High'].diff()
+                minus_dm = -data['Low'].diff()
+                
+                p_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0)
+                m_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0)
+                
+                smooth_tr = data['TR'].ewm(alpha=1/N, adjust=False).mean()
+                smooth_p_dm = pd.Series(p_dm, index=data.index).ewm(alpha=1/N, adjust=False).mean()
+                smooth_m_dm = pd.Series(m_dm, index=data.index).ewm(alpha=1/N, adjust=False).mean()
+                
+                p_di = 100 * (smooth_p_dm / smooth_tr)
+                m_di = 100 * (smooth_m_dm / smooth_tr)
+                
+                dx = 100 * (p_di - m_di).abs() / (p_di + m_di)
+                adx = dx.ewm(alpha=1/smoothing_N, adjust=False).mean()
+                return float(adx.iloc[-1])
+
+            adx14_val = calculer_adx_w(df, 14, 14)
+            adx7_val = calculer_adx_w(df, 7, 7)
+
+            results.append({
+                "ACTIF": ticker,
+                "ATR": atr_actuel,
+                "Ratio th.": ratio_th,
+                "Close": cloture_actuelle,
+                "High pr": high_pr_val,
+                "Ratio": ratio_high,
+                "Tenkan": tenkan_actuel,
+                "Tenkan %": tenkan_pct,
+                "%K": k_actuel,
+                "%D": d_actuel,
+                "K/D": kd_ratio,
+                "K-D": kd_diff,
+                "ADX14": adx14_val,
+                "ADX7": adx7_val
+            })
+        except Exception as e:
+            st.error(f"Erreur sur le ticker {ticker} (Onglet 3) : {str(e)}")
+            continue
     return pd.DataFrame(results)
 
 # --- STYLISATION DES TABLEAUX ---
@@ -123,15 +213,14 @@ def colorier_tendance(val):
 
 
 # --- INTERFACE UTILISATEUR STREAMLIT ---
-st.title("📊 Scanner SMI Épuré")
+st.title("📊 Scanner SMI Épuré & Avancé")
 
-tab1, tab2 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash"])
+tab1, tab2, tab3 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash", "📈 Indicateurs Avancés"])
 
 # --- ONGLET 1 : LISTE ENREGISTRÉE (WATCHLIST) ---
 with tab1:
     st.subheader("Votre Watchlist")
     tickers_sauvegardes = charger_tickers()
-    
     entree_texte = st.text_area(
         "Modifier les actifs de la liste (séparés par un espace) :",
         value=" ".join(tickers_sauvegardes),
@@ -145,10 +234,7 @@ with tab1:
             if not df_res.empty:
                 colonnes_tab1 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
                 df_tab1 = df_res[colonnes_tab1].copy()
-                
-                # Tri par DIFFÉRENCE croissante
                 df_tab1 = df_tab1.sort_values(by="DIFFÉRENCE", ascending=True)
-                
                 df_style = df_tab1.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
                 st.dataframe(df_style, use_container_width=True, hide_index=True)
             else:
@@ -173,12 +259,46 @@ with tab2:
                 if not df_res_flash.empty:
                     colonnes_tab2 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "TENDANCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
                     df_tab2 = df_res_flash[colonnes_tab2].copy()
-                    
                     df_tab2 = df_tab2.sort_values(by="DIFFÉRENCE", ascending=True)
-                    
                     df_style_flash = (df_tab2.style.format(precision=2)
                                       .map(colorier_diff, subset=['DIFFÉRENCE'])
                                       .map(colorier_tendance, subset=['TENDANCE']))
                     st.dataframe(df_style_flash, use_container_width=True, hide_index=True)
                 else:
                     st.warning("Impossible de générer l'analyse flash.")
+
+# --- ONGLET 3 : TABLEAU AVANCÉ (NOUVEAU) ---
+with tab3:
+    st.subheader("Tableau de Synthèse Technique Multi-Indicateurs")
+    entree_tab3 = st.text_area(
+        "Entrez les tickers à analyser pour le tableau complet :",
+        value="TSLA NVDA AMD MU AAPL",
+        key="txt_tab3"
+    )
+    liste_tab3 = [t.strip().upper() for t in entree_tab3.split() if t.strip()]
+    
+    if st.button("📊 Générer le Tableau Avancé", key="btn_tab3", use_container_width=True):
+        if not liste_tab3:
+            st.warning("Veuillez saisir au moins un ticker.")
+        else:
+            with st.spinner("Calcul mathématique des indicateurs complexes..."):
+                df_avances = calculer_indicateurs_techniques_avances(liste_tab3)
+                if not df_avances.empty:
+                    # Ordre des colonnes strictement respecté selon votre demande
+                    ordre_colonnes = [
+                        "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
+                        "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
+                    ]
+                    df_final_tab3 = df_avances[ordre_colonnes].copy()
+                    
+                    # Stylisation globale (2 décimales) + coloration sur la différence K-D
+                    df_style_tab3 = (df_final_tab3.style.format({
+                        "ATR": "{:.2f}", "Ratio th.": "{:.2f}%", "Close": "{:.2f}", 
+                        "High pr": "{:.2f}", "Ratio": "{:.2f}%", "Tenkan": "{:.2f}", 
+                        "Tenkan %": "{:.2f}%", "%K": "{:.2f}", "%D": "{:.2f}", 
+                        "K/D": "{:.2f}", "K-D": "{:.2f}", "ADX14": "{:.2f}", "ADX7": "{:.2f}"
+                    }).map(colorier_diff, subset=['K-D']))
+                    
+                    st.dataframe(df_style_tab3, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Aucune donnée disponible pour ces critères.")
