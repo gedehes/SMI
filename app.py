@@ -24,12 +24,11 @@ def sauvegarder_tickers(liste_str):
 
 # --- NETTOYAGE DES COLONNES MULTI-INDEX ---
 def aplatir_donnees(df):
-    # Si yfinance retourne un MultiIndex (cas fréquent selon les versions), on extrait le premier niveau
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
     return df
 
-# --- CALCUL DU SMI & PRIX ---
+# --- CALCUL DU SMI REVISITÉ (CONFIGURATION D'AVANT-HIER) ---
 def calculer_smi_watchlist(ticker_list):
     results = []
     
@@ -46,12 +45,11 @@ def calculer_smi_watchlist(ticker_list):
             if not all(col in df.columns for col in ['High', 'Low', 'Close']):
                 continue
                 
-            if len(df) < 20: 
+            if len(df) < 40: # Augmenté car le lissage à 25 demande plus d'historique initial
                 continue
 
-            # --- FORMULE STANDARD DU STOCHASTIC MOMENTUM INDEX (SMI) ---
-            # Paramètres classiques : Période 14, Premier lissage 3, Second lissage 3
-            période = 14
+            # --- FORMULE DE WILLIAM BLAU (13, 25, 2, 9) ---
+            période = 13
             df['LL'] = df['Low'].rolling(window=période).min()
             df['HH'] = df['High'].rolling(window=période).max()
             df['HL_Center'] = (df['HH'] + df['LL']) / 2
@@ -60,27 +58,26 @@ def calculer_smi_watchlist(ticker_list):
             df['D'] = df['Close'] - df['HL_Center']
             df['HL_Range'] = df['HH'] - df['LL']
             
-            # Double lissage de la distance (D)
-            df['D_Smooth1'] = df['D'].ewm(span=3, adjust=False).mean()
-            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=3, adjust=False).mean()
+            # Double lissage de la distance (D) : 25 puis 2
+            df['D_Smooth1'] = df['D'].ewm(span=25, adjust=False).mean()
+            df['D_Smooth2'] = df['D_Smooth1'].ewm(span=2, adjust=False).mean()
             
-            # Double lissage du Range (HL_Range)
-            df['Range_Smooth1'] = df['HL_Range'].ewm(span=3, adjust=False).mean()
-            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=3, adjust=False).mean()
+            # Double lissage du Range (HL_Range) : 25 puis 2
+            df['Range_Smooth1'] = df['HL_Range'].ewm(span=25, adjust=False).mean()
+            df['Range_Smooth2'] = df['Range_Smooth1'].ewm(span=2, adjust=False).mean()
             
             # Éviter les divisions par zéro
             df['Range_Smooth2'] = df['Range_Smooth2'].apply(lambda x: x if x != 0 else 0.00001)
             
             # Calcul des lignes %K et %D du SMI
             df['SMI_K'] = 100 * (df['D_Smooth2'] / (0.5 * df['Range_Smooth2']))
-            df['SMI_D'] = df['SMI_K'].ewm(span=10, adjust=False).mean()
+            df['SMI_D'] = df['SMI_K'].ewm(span=9, adjust=False).mean()
             df['Diff'] = df['SMI_K'] - df['SMI_D']
             
             # --- EXTRACTION DES DERNIÈRES VALEURS RÉSULTATS ---
             derniere_ligne = df.iloc[-1]
             ligne_precedente = df.iloc[-2]
             
-            # Extraction explicite des prix sous forme de float simple
             cloture_actuelle = float(derniere_ligne['Close'])
             haut_actuel = float(derniere_ligne['High'])
             bas_actuel = float(derniere_ligne['Low'])
@@ -90,7 +87,6 @@ def calculer_smi_watchlist(ticker_list):
             diff_actuelle = float(derniere_ligne['Diff'])
             k_precedent = float(ligne_precedente['SMI_K'])
             
-            # Dynamique de tendance de la ligne %K
             tendance = "🔼 Croissant" if k_actuel >= k_precedent else "🔽 Décroissant"
             
             results.append({
@@ -144,14 +140,12 @@ with tab1:
         with st.spinner("Calcul du SMI hebdomadaire..."):
             df_res = calculer_smi_watchlist(liste_actifs)
             if not df_res.empty:
-                # On filtre les colonnes demandées pour l'onglet 1
                 colonnes_tab1 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
                 df_tab1 = df_res[colonnes_tab1].copy()
                 
                 # Tri par DIFFÉRENCE croissante
                 df_tab1 = df_tab1.sort_values(by="DIFFÉRENCE", ascending=True)
                 
-                # Application des styles et affichage
                 df_style = df_tab1.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
                 st.dataframe(df_style, use_container_width=True, hide_index=True)
             else:
@@ -174,7 +168,6 @@ with tab2:
             with st.spinner("Analyse de la tendance SMI..."):
                 df_res_flash = calculer_smi_watchlist(liste_flash)
                 if not df_res_flash.empty:
-                    # Ajout de la colonne TENDANCE pour l'onglet 2
                     colonnes_tab2 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "TENDANCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
                     df_tab2 = df_res_flash[colonnes_tab2].copy()
                     
