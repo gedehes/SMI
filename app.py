@@ -23,6 +23,15 @@ def sauvegarder_tickers(liste_str):
             f.write(f"{ticker}\n")
     return tickers
 
+# --- NETTOYAGE SÉCURISÉ DES COLONNES MULTI-INDEX ---
+def determiner_et_aplatir_colonnes(df):
+    if isinstance(df.columns, pd.MultiIndex):
+        if 'Close' in df.columns.get_level_values(0):
+            df.columns = df.columns.get_level_values(0)
+        elif 'Close' in df.columns.get_level_values(1):
+            df.columns = df.columns.get_level_values(1)
+    return df
+
 # --- MOTEUR DE CALCUL CENTRALISÉ ---
 def calculer_indicateurs_globaux(ticker_list):
     results = []
@@ -31,32 +40,36 @@ def calculer_indicateurs_globaux(ticker_list):
     
     for ticker in ticker_list:
         try:
-            # 1. Récupération des données historiques
-            df_wk = yf.download(ticker, period="5y", interval="1wk", progress=False, auto_adjust=False)
+            # 1. Téléchargement avec auto_adjust=True pour la cohérence des prix et du SMI
+            df_wk = yf.download(ticker, period="5y", interval="1wk", progress=False, auto_adjust=True)
             if df_wk.empty: continue
-            if isinstance(df_wk.columns, pd.MultiIndex): df_wk.columns = df_wk.columns.get_level_values(0)
+            df_wk = determiner_et_aplatir_colonnes(df_wk)
             
-            df_d = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=False)
+            df_d = yf.download(ticker, period="10d", interval="1d", progress=False, auto_adjust=True)
             if df_d.empty: continue
-            if isinstance(df_d.columns, pd.MultiIndex): df_d.columns = df_d.columns.get_level_values(0)
+            df_d = determiner_et_aplatir_colonnes(df_d)
             
+            # Reconstruction de la semaine courante à partir des données Daily
             this_week_daily = df_d[df_d.index.date >= monday_this_week]
             
             if not this_week_daily.empty:
-                w_open = this_week_daily['Open'].iloc[0]
-                w_high = this_week_daily['High'].max()
-                w_low = this_week_daily['Low'].min()
-                w_close = this_week_daily['Close'].iloc[-1]
+                w_open = float(this_week_daily['Open'].iloc[0])
+                w_high = float(this_week_daily['High'].max())
+                w_low = float(this_week_daily['Low'].min())
+                w_close = float(this_week_daily['Close'].iloc[-1])
                 
+                # On filtre l'historique pour enlever l'ancienne ligne incomplète et injecter la propre
                 df_wk = df_wk[df_wk.index.date < monday_this_week].copy()
-                current_week_row = pd.DataFrame({'Open': [w_open], 'High': [w_high], 'Low': [w_low], 'Close': [w_close]}, index=[pd.Timestamp(monday_this_week)])
-                df_final = pd.concat([df_wk, current_week_row])
+                current_week_row = pd.DataFrame({
+                    'Open': [w_open], 'High': [w_high], 'Low': [w_low], 'Close': [w_close]
+                }, index=[pd.Timestamp(monday_this_week)])
+                df_final = pd.concat([df_wk, current_week_row]).sort_index()
             else:
-                df_final = df_wk.copy()
+                df_final = df_wk.copy().sort_index()
             
             if len(df_final) < 60: continue
             
-            # --- FORMULE STRICTE SMI (14, 4, 1, 14, EMA) ---
+            # --- FORMULE DE BASE STRICTE DU SMI (14, 4, 1, 14, EMA) ---
             rolling_high_14 = df_final['High'].rolling(14).max()
             rolling_low_14 = df_final['Low'].rolling(14).min()
             mid_14 = (rolling_high_14 + rolling_low_14) / 2
@@ -74,7 +87,7 @@ def calculer_indicateurs_globaux(ticker_list):
             df_final['SMI_D'] = df_final['SMI_K'].ewm(span=14, adjust=False).mean()
             df_final['Diff'] = df_final['SMI_K'] - df_final['SMI_D']
             
-            # --- EXTRACTION DES COMPOSANTES ---
+            # --- CAPTURE DES VALEURS FINALES ---
             last_row = df_final.iloc[-1]
             prev_row = df_final.iloc[-2]
             
@@ -84,7 +97,7 @@ def calculer_indicateurs_globaux(ticker_list):
             
             last_k = float(last_row['SMI_K'])
             last_d = float(last_row['SMI_D'])
-            last_diff = float(last_row['Diff']) # <-- Correction : Définition de la variable manquante
+            last_diff = float(last_row['Diff'])
             prev_k = float(prev_row['SMI_K'])
             
             tendance = "🔼 Croissant" if last_k >= prev_k else "🔽 Décroissant"
@@ -99,23 +112,28 @@ def calculer_indicateurs_globaux(ticker_list):
             atr14_series = tr.ewm(alpha=1/14, adjust=False).mean()
             atr_val = float(atr14_series.iloc[-1])
             
+            # Ratio Théorique
             ratio_th_val = (atr_val / close_val * 100) if close_val != 0 else 0
             
-            # High pr : 2ème plus haut réel sur 12 semaines
-            last_12_highs = df_final['High'].iloc[-12:]
-            high_pr_val = float(last_12_highs.nlargest(2).iloc[-1]) if len(last_12_highs) >= 2 else high_val
+            # High pr : Valeur la plus haute sur 12 semaines sans compter la dernière (-13 à -1)
+            weeks_before = df_final.iloc[-13:-1]
+            high_pr_val = float(weeks_before['High'].max()) if len(weeks_before) >= 12 else high_val
             
+            # Ratio : Close / High pr - 1
             ratio_val = ((close_val / high_pr_val) - 1) * 100 if high_pr_val != 0 else 0
             
-            # Tenkan Ichimoku (9)
+            # Tenkan Ichimoku (9) en cours
             tenkan_series = (df_final['High'].rolling(9).max() + df_final['Low'].rolling(9).min()) / 2
             tenkan_val = float(tenkan_series.iloc[-1])
+            
+            # Tenkan %
             tenkan_pct_val = ((close_val / tenkan_val) - 1) * 100 if tenkan_val != 0 else 0
             
+            # Multi-indicateurs K/D et K-D
             kd_ratio_val = (last_k / last_d) if last_d != 0 else 0
             kd_diff_val = last_k - last_d
             
-            # Fonction interne ADX (Wilder)
+            # Fonction ADX Lissage authentique de Wilder
             def calculer_adx(df, p):
                 p_high = df['High'].shift(1)
                 p_low = df['Low'].shift(1)
@@ -165,17 +183,20 @@ def calculer_indicateurs_globaux(ticker_list):
             continue
     return pd.DataFrame(results)
 
-# --- FONCTIONS DE STYLISATION DE COULEUR ---
+# --- CONFIGURATION STYLISATION DES TABLEAUX ---
 def colorier_diff(val):
-    color = '#118d57' if val >= 0 else '#b71d18'
-    return f'color: {color}; font-weight: bold'
+    try:
+        color = '#118d57' if float(val) >= 0 else '#b71d18'
+        return f'color: {color}; font-weight: bold'
+    except:
+        return ''
 
 def colorier_tendance(val):
     color = '#118d57' if "Croissant" in str(val) else '#b71d18'
     return f'color: {color}; font-weight: bold'
 
 
-# --- STRUCTURE INTERFACE ---
+# --- STRUCTURE APPLICATION WEB ---
 st.title("📊 Terminal SMI & Indicateurs Avancés")
 
 tab1, tab2, tab3 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash + Tendance", "🧬 Dashboard Multi-Indicateurs"])
@@ -235,7 +256,6 @@ with tab2:
 # --- ONGLET 3 : DASHBOARD MULTI-INDICATEURS ---
 with tab3:
     st.subheader("Analyse Technique Avancée Globale")
-    st.markdown("_Toutes les données sont calculées en base Hebdomadaire (Weekly) synchronisée._")
     
     tickers_tab3_texte = st.text_area(
         "Entrez les tickers à étudier pour le grand tableau :",
@@ -251,12 +271,14 @@ with tab3:
             with st.spinner("Extraction et génération du tableau de synthèse..."):
                 df_all = calculer_indicateurs_globaux(liste_tab3)
                 if not df_all.empty:
+                    # Sélection et ordonnancement strict demandé
                     colonnes_ordre = [
                         "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
                         "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
                     ]
                     df_tab3 = df_all[colonnes_ordre].copy()
                     
+                    # Mise en valeur de la colonne K-D pour repérer la dynamique SMI
                     df_style = (df_tab3.style.format(precision=2)
                                 .map(colorier_diff, subset=['K-D']))
                     
