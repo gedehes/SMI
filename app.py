@@ -181,4 +181,8 @@ with tab2:
                     df_tab2 = df_tab2.sort_values(by="DIFFÉRENCE", ascending=True)
                     
                     df_style_flash = (df_tab2.style.format(precision=2)
-                
+                                      .map(colorier_diff, subset=['DIFFÉRENCE'])
+                                      .map(colorier_tendance, subset=['TENDANCE']))
+                    st.dataframe(df_style_flash, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Impossible de générer l'analyse flash.")
