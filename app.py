@@ -31,7 +31,7 @@ def calculer_indicateurs_globaux(ticker_list):
     
     for ticker in ticker_list:
         try:
-            # 1. Récupération des données historiques et reconstruction de la semaine en cours
+            # 1. Récupération des données historiques
             df_wk = yf.download(ticker, period="5y", interval="1wk", progress=False, auto_adjust=False)
             if df_wk.empty: continue
             if isinstance(df_wk.columns, pd.MultiIndex): df_wk.columns = df_wk.columns.get_level_values(0)
@@ -54,7 +54,7 @@ def calculer_indicateurs_globaux(ticker_list):
             else:
                 df_final = df_wk.copy()
             
-            if len(df_final) < 60: continue # Sécurité pour le calcul de l'Ichimoku (52) et ADX
+            if len(df_final) < 60: continue
             
             # --- FORMULE STRICTE SMI (14, 4, 1, 14, EMA) ---
             rolling_high_14 = df_final['High'].rolling(14).max()
@@ -74,8 +74,7 @@ def calculer_indicateurs_globaux(ticker_list):
             df_final['SMI_D'] = df_final['SMI_K'].ewm(span=14, adjust=False).mean()
             df_final['Diff'] = df_final['SMI_K'] - df_final['SMI_D']
             
-            # --- CALCULS COMPLÉMENTAIRES (ONGLET 3) ---
-            # Valeurs de base de la dernière ligne
+            # --- EXTRACTION DES COMPOSANTES ---
             last_row = df_final.iloc[-1]
             prev_row = df_final.iloc[-2]
             
@@ -83,10 +82,11 @@ def calculer_indicateurs_globaux(ticker_list):
             high_val = float(last_row['High'])
             low_val = float(last_row['Low'])
             
-            # SMI K & D Actuels et Tendance
             last_k = float(last_row['SMI_K'])
             last_d = float(last_row['SMI_D'])
+            last_diff = float(last_row['Diff']) # <-- Correction : Définition de la variable manquante
             prev_k = float(prev_row['SMI_K'])
+            
             tendance = "🔼 Croissant" if last_k >= prev_k else "🔽 Décroissant"
             
             # ATR (14) Weekly
@@ -99,28 +99,23 @@ def calculer_indicateurs_globaux(ticker_list):
             atr14_series = tr.ewm(alpha=1/14, adjust=False).mean()
             atr_val = float(atr14_series.iloc[-1])
             
-            # Ratio théorique (ATR / Close) en %
             ratio_th_val = (atr_val / close_val * 100) if close_val != 0 else 0
             
             # High pr : 2ème plus haut réel sur 12 semaines
             last_12_highs = df_final['High'].iloc[-12:]
             high_pr_val = float(last_12_highs.nlargest(2).iloc[-1]) if len(last_12_highs) >= 2 else high_val
             
-            # Ratio : (Close / High pr) - 1 en %
             ratio_val = ((close_val / high_pr_val) - 1) * 100 if high_pr_val != 0 else 0
             
             # Tenkan Ichimoku (9)
             tenkan_series = (df_final['High'].rolling(9).max() + df_final['Low'].rolling(9).min()) / 2
             tenkan_val = float(tenkan_series.iloc[-1])
-            
-            # Tenkan % : (Close / Tenkan) - 1 en %
             tenkan_pct_val = ((close_val / tenkan_val) - 1) * 100 if tenkan_val != 0 else 0
             
-            # Rapports K/D et K-D
             kd_ratio_val = (last_k / last_d) if last_d != 0 else 0
             kd_diff_val = last_k - last_d
             
-            # Fonction interne pour le calcul de l'ADX (Wilder)
+            # Fonction interne ADX (Wilder)
             def calculer_adx(df, p):
                 p_high = df['High'].shift(1)
                 p_low = df['Low'].shift(1)
@@ -143,7 +138,6 @@ def calculer_indicateurs_globaux(ticker_list):
             adx14_val = calculer_adx(df_final, 14)
             adx7_val = calculer_adx(df_final, 7)
             
-            # Enregistrement du dictionnaire global
             results.append({
                 "ACTIF": ticker, 
                 "SMI %K (k)": last_k,
@@ -184,7 +178,6 @@ def colorier_tendance(val):
 # --- STRUCTURE INTERFACE ---
 st.title("📊 Terminal SMI & Indicateurs Avancés")
 
-# Création des trois onglets
 tab1, tab2, tab3 = st.tabs(["📋 Liste Enregistrée", "⚡ Analyse Flash + Tendance", "🧬 Dashboard Multi-Indicateurs"])
 
 # --- ONGLET 1 : LISTE ENREGISTRÉE ---
@@ -258,14 +251,12 @@ with tab3:
             with st.spinner("Extraction et génération du tableau de synthèse..."):
                 df_all = calculer_indicateurs_globaux(liste_tab3)
                 if not df_all.empty:
-                    # Sélection et ordonnancement strict des colonnes requises
                     colonnes_ordre = [
                         "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
                         "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
                     ]
                     df_tab3 = df_all[colonnes_ordre].copy()
                     
-                    # Stylisation : On colore aussi la colonne K-D car elle équivaut à la différence SMI
                     df_style = (df_tab3.style.format(precision=2)
                                 .map(colorier_diff, subset=['K-D']))
                     
