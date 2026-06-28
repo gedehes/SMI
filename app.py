@@ -102,7 +102,7 @@ def calculer_indicateurs_techniques_avances(ticker_list):
             df = aplatir_donnees(df)
             if not all(col in df.columns for col in ['High', 'Low', 'Close']):
                 continue
-            if len(df) < 40: # Plus d'historique requis pour stabiliser l'ADX et le High pr (12W)
+            if len(df) < 40: 
                 continue
 
             # 1. Base des prix actuels
@@ -267,7 +267,7 @@ with tab2:
                 else:
                     st.warning("Impossible de générer l'analyse flash.")
 
-# --- ONGLET 3 : TABLEAU AVANCÉ (NOUVEAU) ---
+# --- ONGLET 3 : TABLEAU AVANCÉ (MISE EN FORME STANDARD) ---
 with tab3:
     st.subheader("Tableau de Synthèse Technique Multi-Indicateurs")
     entree_tab3 = st.text_area(
@@ -284,20 +284,19 @@ with tab3:
             with st.spinner("Calcul mathématique des indicateurs complexes..."):
                 df_avances = calculer_indicateurs_techniques_avances(liste_tab3)
                 if not df_avances.empty:
-                    # Ordre des colonnes strictement respecté selon votre demande
                     ordre_colonnes = [
                         "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
                         "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
                     ]
                     df_final_tab3 = df_avances[ordre_colonnes].copy()
                     
-                    # Stylisation globale (2 décimales) + coloration sur la différence K-D
-                    df_style_tab3 = (df_final_tab3.style.format({
+                    # Uniquement du formatage de texte standard (Pas de couleur ni de gras)
+                    df_style_tab3 = df_final_tab3.style.format({
                         "ATR": "{:.2f}", "Ratio th.": "{:.2f}%", "Close": "{:.2f}", 
                         "High pr": "{:.2f}", "Ratio": "{:.2f}%", "Tenkan": "{:.2f}", 
                         "Tenkan %": "{:.2f}%", "%K": "{:.2f}", "%D": "{:.2f}", 
                         "K/D": "{:.2f}", "K-D": "{:.2f}", "ADX14": "{:.2f}", "ADX7": "{:.2f}"
-                    }).map(colorier_diff, subset=['K-D']))
+                    })
                     
                     st.dataframe(df_style_tab3, use_container_width=True, hide_index=True)
                 else:
