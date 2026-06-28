@@ -116,20 +116,20 @@ def calculer_indicateurs_techniques_avances(ticker_list):
             df['ATR'] = df['TR'].ewm(alpha=1/14, adjust=False).mean()
             atr_actuel = float(df['ATR'].iloc[-1])
             
-            # Calcul : Ratio th. (Format numérique sous forme de décimale brute)
+            # Calcul : Ratio th. (Format numérique brut)
             ratio_th = (atr_actuel / cloture_actuelle)
             
             # 3. High pr : Plus haut des 12 semaines précédentes (excluant la semaine en cours)
             high_pr_val = float(df['High'].shift(1).rolling(window=12).max().iloc[-1])
             
-            # Calcul : Ratio (Format numérique sous forme de décimale brute)
+            # Calcul : Ratio (Format numérique brut)
             ratio_high = (cloture_actuelle / high_pr_val - 1)
             
             # 4. Tenkan (Période 9 d'Ichimoku)
             df['Tenkan'] = (df['High'].rolling(window=9).max() + df['Low'].rolling(window=9).min()) / 2
             tenkan_actuel = float(df['Tenkan'].iloc[-1])
             
-            # Calcul : Tenkan % (Format numérique sous forme de décimale brute)
+            # Calcul : Tenkan % (Format numérique brut)
             tenkan_pct = (cloture_actuelle / tenkan_actuel - 1)
             
             # 5. SMI Identique (14, 4, 1, 14)
@@ -233,4 +233,81 @@ with tab1:
             df_res = calculer_smi_watchlist(liste_actifs)
             if not df_res.empty:
                 colonnes_tab1 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
-                df_
+                df_tab1 = df_res[colonnes_tab1].copy()
+                df_tab1 = df_tab1.sort_values(by="DIFFÉRENCE", ascending=True)
+                df_style = df_tab1.style.format(precision=2).map(colorier_diff, subset=['DIFFÉRENCE'])
+                st.dataframe(df_style, use_container_width=True, hide_index=True)
+            else:
+                st.warning("Aucune donnée n'a pu être récupérée.")
+
+# --- ONGLET 2 : ANALYSE FLASH ---
+with tab2:
+    st.subheader("Analyse de Tendance Rapide")
+    entree_flash = st.text_area(
+        "Entrez des tickers temporaires (ex: TSLA NVDA AMD) :",
+        value="TSLA NVDA AMD",
+        key="txt_flash"
+    )
+    liste_flash = [t.strip().upper() for t in entree_flash.split() if t.strip()]
+    
+    if st.button("🔍 Lancer le Scan Flash", key="btn_flash", use_container_width=True):
+        if not liste_flash:
+            st.warning("Veuillez saisir au moins un ticker.")
+        else:
+            with st.spinner("Analyse de la tendance SMI..."):
+                df_res_flash = calculer_smi_watchlist(liste_flash)
+                if not df_res_flash.empty:
+                    colonnes_tab2 = ["ACTIF", "SMI %K (k)", "SMI %D (d)", "DIFFÉRENCE", "TENDANCE", "HAUT (W)", "BAS (W)", "CLÔTURE"]
+                    df_tab2 = df_res_flash[colonnes_tab2].copy()
+                    df_tab2 = df_tab2.sort_values(by="DIFFÉRENCE", ascending=True)
+                    df_style_flash = (df_tab2.style.format(precision=2)
+                                      .map(colorier_diff, subset=['DIFFÉRENCE'])
+                                      .map(colorier_tendance, subset=['TENDANCE']))
+                    st.dataframe(df_style_flash, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Impossible de générer l'analyse flash.")
+
+# --- ONGLET 3 : TABLEAU AVANCÉ (FORMATS NUMÉRIQUES FIXÉS) ---
+with tab3:
+    st.subheader("Tableau de Synthèse Technique Multi-Indicateurs")
+    entree_tab3 = st.text_area(
+        "Entrez les tickers à analyser pour le tableau complet :",
+        value="TSLA NVDA AMD MU AAPL",
+        key="txt_tab3"
+    )
+    liste_tab3 = [t.strip().upper() for t in entree_tab3.split() if t.strip()]
+    
+    if st.button("📊 Générer le Tableau Avancé", key="btn_tab3", use_container_width=True):
+        if not liste_tab3:
+            st.warning("Veuillez saisir au moins un ticker.")
+        else:
+            with st.spinner("Calcul mathématique des indicateurs complexes..."):
+                df_avances = calculer_indicateurs_techniques_avances(liste_tab3)
+                if not df_avances.empty:
+                    ordre_colonnes = [
+                        "ACTIF", "ATR", "Ratio th.", "Close", "High pr", "Ratio", 
+                        "Tenkan", "Tenkan %", "%K", "%D", "K/D", "K-D", "ADX14", "ADX7"
+                    ]
+                    df_final_tab3 = df_avances[ordre_colonnes].copy()
+                    
+                    # 4 décimales pour les ratios sous forme de nombre (ex: 0.0523)
+                    # 2 décimales pour tout le reste
+                    df_style_tab3 = df_final_tab3.style.format({
+                        "ATR": "{:.2f}", 
+                        "Ratio th.": "{:.4f}", 
+                        "Close": "{:.2f}", 
+                        "High pr": "{:.2f}", 
+                        "Ratio": "{:.4f}", 
+                        "Tenkan": "{:.2f}", 
+                        "Tenkan %": "{:.4f}", 
+                        "%K": "{:.2f}", 
+                        "%D": "{:.2f}", 
+                        "K/D": "{:.2f}", 
+                        "K-D": "{:.2f}", 
+                        "ADX14": "{:.2f}", 
+                        "ADX7": "{:.2f}"
+                    })
+                    
+                    st.dataframe(df_style_tab3, use_container_width=True, hide_index=True)
+                else:
+                    st.warning("Aucune donnée disponible pour ces critères.")
