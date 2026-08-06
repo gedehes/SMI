@@ -1,8 +1,8 @@
+import os
+import numpy as np
+import pandas as pd
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
-import os
 
 # Configuration de la page
 st.set_page_config(page_title="Scanner SMI & Breakout", layout="wide")
