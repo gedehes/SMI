@@ -3,31 +3,46 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import os
+import requests
 
 # Configuration de la page
 st.set_page_config(page_title="Scanner SMI & Breakout", layout="wide")
 
 FILENAME = "mes_tickers.txt"
 
-# Listes de composants pour le calcul du Market Breadth
-SP500_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "TSLA",
-    "JPM", "UNH", "V", "XOM", "MA", "PG", "COST", "JNJ", "HD", "ABBV", "MRK", "NFLX",
-    "AMD", "CRM", "KO", "PEP", "ORCL", "BAC", "WMT", "CVX", "ADBE", "MCD", "CSCO",
-    "WFC", "DIS", "ACN", "ABT", "PM", "INTU", "IBM", "GE", "TXN", "AMAT", "QCOM",
-    "DHR", "CAT", "AMGN", "NEE", "UNP", "LOW", "GS", "HON", "COP", "BA", "BKNG",
-    "NKE", "ISRG", "PLTR", "PFE", "RTX", "SYK", "T", "LMT", "ADP", "MDLZ", "TJX",
-    "BLK", "MMC", "AMT", "C", "VRTX", "BSX", "SCHW", "SBUX", "CI", "GILD", "MO"
-]
+# ---RÉCUPÉRATION DYNAMIQUE ET À JOUR DES COMPOSANTS DES INDICES ---
+@st.cache_data(ttl=43200)  # Mise en cache 12 heures
+def get_sp500_tickers():
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(response.text)
+        df = tables[0]
+        tickers = df['Symbol'].str.replace('.', '-', regex=False).tolist()
+        return [t.strip().upper() for t in tickers]
+    except Exception as e:
+        st.warning(f"Impossible de récupérer dynamiquement le S&P 500 ({e}), chargement de la liste secours.")
+        return ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "TSLA"]
 
-NASDAQ_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX",
-    "AMD", "PEP", "TMUS", "ADBE", "CSCO", "INTU", "AMAT", "QCOM", "TXN", "HON",
-    "CMCSA", "AMGN", "BKNG", "ISRG", "VRTX", "PANW", "ADP", "REGN", "LRCX", "MDLZ",
-    "MU", "MELI", "KLAC", "SNPS", "CDNS", "GILD", "PYPL", "ORLY", "CTAS", "BKR",
-    "MAR", "CSX", "CRWD", "ABNB", "AEP", "NXPI", "FTNT", "MCHP", "WDAY", "KDP",
-    "LULU", "DXCM", "PCAR", "ROST", "KHC", "IDXX", "ODFL", "MNST", "PAYX", "FAST"
-]
+@st.cache_data(ttl=43200)  # Mise en cache 12 heures
+def get_nasdaq100_tickers():
+    try:
+        url = "https://en.wikipedia.org/wiki/Nasdaq-100"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers)
+        tables = pd.read_html(response.text)
+        for t in tables:
+            if 'Ticker' in t.columns:
+                tickers = t['Ticker'].str.replace('.', '-', regex=False).tolist()
+                return [x.strip().upper() for x in tickers]
+            elif 'Symbol' in t.columns:
+                tickers = t['Symbol'].str.replace('.', '-', regex=False).tolist()
+                return [x.strip().upper() for x in tickers]
+        raise ValueError("Colonne Ticker/Symbol non trouvée")
+    except Exception as e:
+        st.warning(f"Impossible de récupérer dynamiquement le NASDAQ-100 ({e}), chargement de la liste secours.")
+        return ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX"]
 
 def charger_tickers():
     if os.path.exists(FILENAME):
@@ -47,7 +62,7 @@ def aplatir_donnees(df):
         df.columns = df.columns.get_level_values(0)
     return df
 
-# --- CALCUL DU SMI & VOLUME (ONGLET 1 & 4) ---
+# --- CALCUL DU SMI & VOLUME (ONGLETS 1 & 4) ---
 def calculer_smi_watchlist(ticker_list):
     results = []
     for ticker in ticker_list:
@@ -61,7 +76,6 @@ def calculer_smi_watchlist(ticker_list):
             if len(df) < 30: 
                 continue
 
-            # Calcul du SMI (14, 4, 1, 14)
             période = 14
             df['LL'] = df['Low'].rolling(window=période).min()
             df['HH'] = df['High'].rolling(window=période).max()
@@ -81,7 +95,6 @@ def calculer_smi_watchlist(ticker_list):
             df['SMI_D'] = df['SMI_K'].ewm(span=14, adjust=False).mean()
             df['Diff'] = df['SMI_K'] - df['SMI_D']
             
-            # Calcul MM20 du Volume Hebdo
             df['Vol_MM20'] = df['Volume'].rolling(window=20).mean()
 
             derniere_ligne = df.iloc[-1]
@@ -98,7 +111,6 @@ def calculer_smi_watchlist(ticker_list):
             
             tendance = "🔼 Croissant" if k_actuel >= k_precedent else "🔽 Décroissant"
             
-            # Comparaison Volume Hebdo vs MM20 Volume
             vol_actuel = float(derniere_ligne['Volume'])
             vol_mm20 = float(derniere_ligne['Vol_MM20'])
             vol_status = "Supérieur" if vol_actuel > vol_mm20 else "Inférieur"
@@ -133,9 +145,7 @@ def calculer_ordres_entree(ticker_list):
             if 'High' not in df.columns or len(df) < 20:
                 continue
             
-            # Canal de Donchian 20 semaines (Prix max des 20 dernières semaines)
             prix_max_donchian_20w = float(df['High'].rolling(window=20).max().iloc[-1])
-            
             buy_stop = prix_max_donchian_20w * 1.005
             limite = buy_stop * 1.01
             
@@ -150,45 +160,83 @@ def calculer_ordres_entree(ticker_list):
             continue
     return pd.DataFrame(results)
 
-# --- CALCUL DU MARKET BREADTH (ONGLET 3) ---
+# --- CALCUL DU MARKET BREADTH DYNAMIQUE (ONGLET 3) ---
 def calculer_market_breadth(ticker_list, index_name):
     try:
-        data = yf.download(ticker_list, period="1y", interval="1d", progress=False)['Close']
-        if isinstance(data, pd.Series):
-            data = data.to_frame()
-        data = data.dropna(how='all', axis=1)
+        # Téléchargement groupé pour accélérer le traitement sur 500+ tickers
+        data = yf.download(ticker_list, period="2y", interval="1d", progress=False, threads=True)
+        if data.empty:
+            return None
+
+        if isinstance(data.columns, pd.MultiIndex):
+            close_data = data['Close'].dropna(how='all', axis=1)
+            high_data = data['High'].dropna(how='all', axis=1)
+            low_data = data['Low'].dropna(how='all', axis=1)
+        else:
+            close_data = data[['Close']].dropna(how='all', axis=1)
+            high_data = data[['High']].dropna(how='all', axis=1)
+            low_data = data[['Low']].dropna(how='all', axis=1)
+
+        total_actions_analysées = len(close_data.columns)
+
+        # 1. MM200 Daily
+        mm200 = close_data.rolling(window=200).mean()
+        au_dessus_200 = (close_data.iloc[-1] > mm200.iloc[-1])
+        tot_200 = au_dessus_200.dropna().count()
+        pct_mm200 = (au_dessus_200.sum() / tot_200 * 100) if tot_200 > 0 else 0
+        etat_mm200 = "✅ Sain" if pct_mm200 >= 60 else "🚨 Fragile"
+
+        # 2. MM50 Daily (Score + Tendance vs Veille)
+        mm50 = close_data.rolling(window=50).mean()
         
-        # MM200 Daily
-        mm200 = data.rolling(window=200).mean()
-        
-        derniers_prix = data.iloc[-1]
-        dernieres_mm200 = mm200.iloc[-1]
-        
-        # Action au-dessus de MM200
-        au_dessus = (derniers_prix > dernieres_mm200)
-        total_valides = au_dessus.dropna().count()
-        nb_au_dessus = au_dessus.sum()
-        pct_au_dessus = (nb_au_dessus / total_valides * 100) if total_valides > 0 else 0
-        
-        # Ligne d'Avance / Baisse
-        prix_precedents = data.iloc[-2]
-        variations = derniers_prix - prix_precedents
-        
+        au_dessus_50_today = (close_data.iloc[-1] > mm50.iloc[-1])
+        tot_50_today = au_dessus_50_today.dropna().count()
+        pct_mm50_today = (au_dessus_50_today.sum() / tot_50_today * 100) if tot_50_today > 0 else 0
+
+        au_dessus_50_prev = (close_data.iloc[-2] > mm50.iloc[-2])
+        tot_50_prev = au_dessus_50_prev.dropna().count()
+        pct_mm50_prev = (au_dessus_50_prev.sum() / tot_50_prev * 100) if tot_50_prev > 0 else 0
+
+        mm50_croissant = pct_mm50_today > pct_mm50_prev
+        etat_mm50 = "✅ Vert" if (pct_mm50_today > 50 and mm50_croissant) else "🚨 Rouge"
+
+        # 3. Avance / Baisse
+        variations = close_data.iloc[-1] - close_data.iloc[-2]
         avances = (variations > 0).sum()
         baisses = (variations < 0).sum()
-        inchanges = (variations == 0).sum()
         ratio_ad = avances / baisses if baisses > 0 else avances
-        
-        etat = "✅ Marché Sain" if pct_au_dessus >= 60 else "🚨 Marché Fragile"
-        
+
+        # 4. Plus Hauts vs Plus Bas (NH - NL 52 Semaines / 252 Jours)
+        high_52w = high_data.rolling(window=252).max()
+        low_52w = low_data.rolling(window=252).min()
+
+        nh_today = (high_data.iloc[-1] >= high_52w.iloc[-1]).sum()
+        nl_today = (low_data.iloc[-1] <= low_52w.iloc[-1]).sum()
+        net_nh_nl_today = nh_today - nl_today
+
+        nh_prev = (high_data.iloc[-2] >= high_52w.iloc[-2]).sum()
+        nl_prev = (low_data.iloc[-2] <= low_52w.iloc[-2]).sum()
+        net_nh_nl_prev = nh_prev - nl_prev
+
+        nh_nl_croissant = net_nh_nl_today > net_nh_nl_prev
+        nh_nl_positif = net_nh_nl_today > 0
+        etat_nh_nl = "✅ Vert" if (nh_nl_positif and nh_nl_croissant) else "🚨 Rouge"
+
         return {
             "Indice": index_name,
-            "Market Breadth (% > MM200)": pct_au_dessus,
-            "État du Marché": etat,
-            "Avances (Hausse)": avances,
-            "Baisses (Rempli)": baisses,
-            "Inchangés": inchanges,
-            "Différence (A - B)": avances - baisses,
+            "Total Actifs": total_actions_analysées,
+            "% > MM200": pct_mm200,
+            "État MM200": etat_mm200,
+            "% > MM50": pct_mm50_today,
+            "MM50 Tendance": "🔼 Croissant" if mm50_croissant else "🔽 Décroissant",
+            "État MM50": etat_mm50,
+            "NH (Plus Hauts)": nh_today,
+            "NL (Plus Bas)": nl_today,
+            "Net (NH - NL)": net_nh_nl_today,
+            "NH/NL Tendance": "🔼 Croissant" if nh_nl_croissant else "🔽 Décroissant",
+            "État NH/NL": etat_nh_nl,
+            "Avances": avances,
+            "Baisses": baisses,
             "Ratio A/B": ratio_ad
         }
     except Exception as e:
@@ -211,7 +259,6 @@ def calculer_indicateurs_techniques_avances(ticker_list):
 
             cloture_actuelle = float(df['Close'].iloc[-1])
             
-            # ATR (14)
             df['High_Low'] = df['High'] - df['Low']
             df['High_ClosePrev'] = (df['High'] - df['Close'].shift(1)).abs()
             df['Low_ClosePrev'] = (df['Low'] - df['Close'].shift(1)).abs()
@@ -227,7 +274,6 @@ def calculer_indicateurs_techniques_avances(ticker_list):
             tenkan_actuel = float(df['Tenkan'].iloc[-1])
             tenkan_pct = (cloture_actuelle / tenkan_actuel - 1)
             
-            # SMI
             période = 14
             df['LL'] = df['Low'].rolling(window=période).min()
             df['HH'] = df['High'].rolling(window=période).max()
@@ -315,8 +361,8 @@ def colorier_actif_conditionnel(row):
     else:
         return ['background-color: #b71d18; color: white; font-weight: bold']
 
-def colorier_mb_etat(val):
-    color = '#118d57' if "Sain" in str(val) else '#b71d18'
+def colorier_statut_vert_rouge(val):
+    color = '#118d57' if "Vert" in str(val) or "Sain" in str(val) else '#b71d18'
     return f'color: {color}; font-weight: bold'
 
 # --- INTERFACE UTILISATEUR STREAMLIT ---
@@ -347,14 +393,12 @@ with tab1:
             with st.spinner("Analyse Breakout Momentum en cours..."):
                 df_res_flash = calculer_smi_watchlist(liste_flash)
                 if not df_res_flash.empty:
-                    # Variable de statut vert complet pour le tri
                     df_res_flash['IS_VERT'] = (
                         (df_res_flash['DIFFÉRENCE'] >= 0) & 
                         (df_res_flash['TENDANCE'].str.contains("Croissant")) & 
                         (df_res_flash['Volume hebdo'] == "Supérieur")
                     )
                     
-                    # Tri : Les verts en premier, puis trié par différence décroissante
                     df_res_flash = df_res_flash.sort_values(by=["IS_VERT", "DIFFÉRENCE"], ascending=[False, False])
                     
                     colonnes_tab1 = [
@@ -414,13 +458,16 @@ with tab2:
 
 # --- ONGLET 3 : MARKET BREADTH ---
 with tab3:
-    st.subheader("🌐 Analyse de la Santé globale du Marché (Market Breadth)")
-    st.write("Analyse du pourcentage d'actions au-dessus de leur MM200 daily et suivi des flux Avances / Baisses.")
+    st.subheader("🌐 Analyse de la Santé Globale du Marché (Market Breadth)")
+    st.caption("Chargement dynamique de la totalité des composants du S&P 500 (500+ actions) et du NASDAQ-100 (100+ actions).")
     
-    if st.button("📊 Calculer le Market Breadth (S&P500 & NASDAQ)", key="btn_mb", use_container_width=True):
-        with st.spinner("Téléchargement et calcul des MM200 en cours..."):
-            mb_sp500 = calculer_market_breadth(SP500_TICKERS, "S&P 500")
-            mb_nasdaq = calculer_market_breadth(NASDAQ_TICKERS, "NASDAQ 100")
+    if st.button("📊 Calculer le Market Breadth Complet", key="btn_mb", use_container_width=True):
+        with st.spinner("Récupération dynamique des composants et calcul sur tous les actifs du S&P 500 et NASDAQ..."):
+            sp500_tickers = get_sp500_tickers()
+            nasdaq_tickers = get_nasdaq100_tickers()
+            
+            mb_sp500 = calculer_market_breadth(sp500_tickers, "S&P 500")
+            mb_nasdaq = calculer_market_breadth(nasdaq_tickers, "NASDAQ 100")
             
             res_mb = []
             if mb_sp500: res_mb.append(mb_sp500)
@@ -429,23 +476,34 @@ with tab3:
             if res_mb:
                 df_mb = pd.DataFrame(res_mb)
                 
-                # Metrics visuelles
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.metric("S&P 500 Breadth (% > MM200)", f"{mb_sp500['Market Breadth (% > MM200)']:.1f}%", delta=mb_sp500['État du Marché'])
-                with col2:
-                    st.metric("NASDAQ 100 Breadth (% > MM200)", f"{mb_nasdaq['Market Breadth (% > MM200)']:.1f}%", delta=mb_nasdaq['État du Marché'])
+                    st.markdown(f"### 🇺🇸 S&P 500 ({mb_sp500['Total Actifs']} actions)")
+                    st.metric("Score MM50 (% > MM50)", f"{mb_sp500['% > MM50']:.1f}%", delta=f"Statut : {mb_sp500['État MM50']}")
+                    st.metric("Net NH - NL (Nouveaux H/B)", f"{mb_sp500['Net (NH - NL)']:+d}", delta=f"Statut NH/NL : {mb_sp500['État NH/NL']}")
                 
-                # Tableau synthétique
-                df_mb_style = df_mb.style.format({
-                    "Market Breadth (% > MM200)": "{:.1f}%",
-                    "Différence (A - B)": "{:+d}",
-                    "Ratio A/B": "{:.2f}"
-                }).map(colorier_mb_etat, subset=['État du Marché'])
+                with col2:
+                    st.markdown(f"### 💻 NASDAQ 100 ({mb_nasdaq['Total Actifs']} actions)")
+                    st.metric("Score MM50 (% > MM50)", f"{mb_nasdaq['% > MM50']:.1f}%", delta=f"Statut : {mb_nasdaq['État MM50']}")
+                    st.metric("Net NH - NL (Nouveaux H/B)", f"{mb_nasdaq['Net (NH - NL)']:+d}", delta=f"Statut NH/NL : {mb_nasdaq['État NH/NL']}")
+                
+                st.markdown("---")
+                st.subheader("📋 Tableau Synthétique du Market Breadth")
+                
+                df_mb_style = (
+                    df_mb.style
+                    .format({
+                        "% > MM200": "{:.1f}%",
+                        "% > MM50": "{:.1f}%",
+                        "Net (NH - NL)": "{:+d}",
+                        "Ratio A/B": "{:.2f}"
+                    })
+                    .map(colorier_statut_vert_rouge, subset=['État MM200', 'État MM50', 'État NH/NL'])
+                )
                 
                 st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
             else:
-                st.warning("Erreur lors de la récupération des données de marché.")
+                st.warning("Erreur lors du traitement des données de marché.")
 
 # --- ONGLET 4 : LISTE ENREGISTRÉE ---
 with tab4:
