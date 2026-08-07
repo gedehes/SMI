@@ -2,6 +2,8 @@ from io import StringIO
 import os
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import requests
 import streamlit as st
 import yfinance as yf
@@ -480,6 +482,96 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
+# --- FONCTION GRAPHIQUE PLOTLY LISIBLE (DOUBLE AXE Y, DEPART 0) ---
+def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
+  sp_sub = sp_close.tail(n_jours)
+  ndx_sub = ndx_close.tail(n_jours)
+  ad_sub = ad_line.tail(n_jours)
+
+  common_idx = sp_sub.index.intersection(ndx_sub.index).intersection(
+      ad_sub.index
+  )
+  if len(common_idx) == 0:
+    return None
+
+  sp_s = sp_sub.loc[common_idx]
+  ndx_s = ndx_sub.loc[common_idx]
+  ad_s = ad_sub.loc[common_idx]
+
+  # Normalisation : tout démarre à 0 au premier jour de la fenêtre
+  sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
+  ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
+  ad_zero = ad_s - ad_s.iloc[0]
+
+  fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+  # Axe Gauche : Indices (%)
+  fig.add_trace(
+      go.Scatter(
+          x=sp_zero.index,
+          y=sp_zero,
+          name="S&P 500 (%)",
+          line=dict(color="#29b6f6", width=2),
+          hovertemplate="S&P 500: <b>%{y:+.2f}%</b><extra></extra>",
+      ),
+      secondary_y=False,
+  )
+
+  fig.add_trace(
+      go.Scatter(
+          x=ndx_zero.index,
+          y=ndx_zero,
+          name="NASDAQ 100 (%)",
+          line=dict(color="#ab47bc", width=2),
+          hovertemplate="NASDAQ 100: <b>%{y:+.2f}%</b><extra></extra>",
+      ),
+      secondary_y=False,
+  )
+
+  # Axe Droit : Ligne Avance-Baisse (Cumul net depuis T0)
+  fig.add_trace(
+      go.Scatter(
+          x=ad_zero.index,
+          y=ad_zero,
+          name="Ligne A/D (Net)",
+          line=dict(color="#ff7043", width=2, dash="dot"),
+          hovertemplate="Ligne A/D Net: <b>%{y:+d}</b><extra></extra>",
+      ),
+      secondary_y=True,
+  )
+
+  fig.update_layout(
+      title=dict(
+          text=f"📊 Performance Relative & A/D — {n_jours} Derniers Jours"
+          " (Départ à 0)",
+          font=dict(size=14),
+      ),
+      hovermode="x unified",
+      margin=dict(l=10, r=10, t=35, b=10),
+      legend=dict(
+          orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+      ),
+      height=400,
+  )
+
+  fig.update_yaxes(
+      title_text="Variation Indices (%)",
+      secondary_y=False,
+      zeroline=True,
+      zerolinewidth=1,
+      zerolinecolor="#666666",
+  )
+  fig.update_yaxes(
+      title_text="Ligne A/D (Titres Net)",
+      secondary_y=True,
+      zeroline=True,
+      zerolinewidth=1,
+      zerolinecolor="#666666",
+  )
+
+  return fig
+
+
 # --- INDICATEURS AVANCÉS ---
 def calculer_indicateurs_techniques_avances(ticker_list):
   results = []
@@ -829,6 +921,8 @@ with tab3:
 
         # Extraction des valeurs les plus récentes
         sp500_mm200_val = mb_sp500["% > MM200"] if mb_sp500 else 0
+        ndx100_mm200_val = mb_nasdaq["% > MM200"] if mb_nasdaq else 0
+
         vix_val = float(vix_close.iloc[-1]) if not vix_close.empty else 0.0
         vix_ema_val = (
             float(vix_ema200.iloc[-1]) if not vix_ema200.empty else 0.0
@@ -840,15 +934,21 @@ with tab3:
             float(ndx_ema200.iloc[-1]) if not ndx_ema200.empty else 0.0
         )
 
-        # 1. Évaluation des 5 conditions dans l'ordre demandé
-        c1_mm200 = sp500_mm200_val >= 50
+        # Évaluation des 6 conditions de trading
+        c1_sp_mm200 = sp500_mm200_val >= 50
+        c1_ndx_mm200 = ndx100_mm200_val >= 50
         c2_vix_val = vix_val <= 25
         c3_vix_ema = vix_val <= vix_ema_val
         c4_sp_ema = sp_val > sp_ema_val
         c5_ndx_ema = ndx_val > ndx_ema_val
 
         trading_ok = (
-            c1_mm200 and c2_vix_val and c3_vix_ema and c4_sp_ema and c5_ndx_ema
+            c1_sp_mm200
+            and c1_ndx_mm200
+            and c2_vix_val
+            and c3_vix_ema
+            and c4_sp_ema
+            and c5_ndx_ema
         )
 
         status_title = "🟢 TRADING OK" if trading_ok else "🔴 TRADING STOP"
@@ -857,14 +957,18 @@ with tab3:
 
         def fmt_item_html(label, is_green):
           color = "#118d57" if is_green else "#b71d18"
-          icon = "●" if is_green else "●"
-          return f"<li style='color: {color}; margin-bottom: 4px; font-weight: bold;'>{icon} {label}</li>"
+          return f"<li style='color: {color}; margin-bottom: 4px; font-weight: bold;'>● {label}</li>"
 
         html_items = [
             fmt_item_html(
                 f"Chiffres MM200 (S&P 500 > MM200) : {sp500_mm200_val:.1f}%"
                 " (Vert si ≥ 50%)",
-                c1_mm200,
+                c1_sp_mm200,
+            ),
+            fmt_item_html(
+                f"Chiffres MM200 (NASDAQ 100 > MM200) : {ndx100_mm200_val:.1f}%"
+                " (Vert si ≥ 50%)",
+                c1_ndx_mm200,
             ),
             fmt_item_html(
                 f"VIX Actuel : {vix_val:.2f} (Vert si ≤ 25)", c2_vix_val
@@ -896,7 +1000,7 @@ with tab3:
         """
         st.markdown(html_banner, unsafe_allow_html=True)
 
-        # 2. Tableau Synthétique
+        # Tableau Synthétique
         df_mb_style = df_mb.style.format({
             "% > MM200": "{:.1f}%",
             "% > MM50": "{:.1f}%",
@@ -911,57 +1015,35 @@ with tab3:
 
         st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
 
-        # 3. Graphiques Comparatifs à 3 Lignes Superposées à 0% (20 Jours & 60 Jours)
+        # Graphiques Comparatifs avec départ à 0 et double axe Y lisible
         if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
           st.markdown("---")
           st.subheader(
-              "📈 Comparaison Relative Superposée à 0% : S&P 500, NASDAQ 100 &"
-              " Ligne A/B"
+              "📈 Comparaison Relative (Départ à 0) : S&P 500, NASDAQ 100 &"
+              " Ligne A/D"
           )
           st.caption(
-              "💡 **Interprétation** : Chaque ligne démarre exactement à **0.0%**"
-              " sur le premier jour du graphique. Cela permet de comparer"
-              " directement la dynamique des variations sans distorsion d'échelle."
+              "💡 **Interprétation** : Chaque série démarre à **0** au début de"
+              " la période. L'axe de gauche mesure la variation en **%** des"
+              " deux indices, tandis que l'axe de droite mesure le cumul net de"
+              " la **Ligne Avance-Baisse** sans déformer les échelles."
           )
-
-          def generer_df_chart_zero(n_jours):
-            sp_sub = sp_close.tail(n_jours)
-            ndx_sub = ndx_close.tail(n_jours)
-            ad_sub = ad_sp500.tail(n_jours)
-
-            common_idx = sp_sub.index.intersection(ndx_sub.index).intersection(
-                ad_sub.index
-            )
-            if len(common_idx) > 0:
-              sp_s = sp_sub.loc[common_idx]
-              ndx_s = ndx_sub.loc[common_idx]
-              ad_s = ad_sub.loc[common_idx]
-
-              sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
-              ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
-              ad_zero = ((ad_s - ad_s.iloc[0]) / len(sp500_actuel)) * 100
-
-              return pd.DataFrame({
-                  "S&P 500 (%)": sp_zero,
-                  "NASDAQ 100 (%)": ndx_zero,
-                  "Ligne Avance-Baisse (%)": ad_zero,
-              })
-            return None
-
-          df_chart_20 = generer_df_chart_zero(20)
-          df_chart_60 = generer_df_chart_zero(60)
 
           col_chart1, col_chart2 = st.columns(2)
 
           with col_chart1:
-            st.markdown("##### 📊 20 Derniers Jours (Départ à 0%)")
-            if df_chart_20 is not None:
-              st.line_chart(df_chart_20, use_container_width=True)
+            fig20 = creerd_graphique_market_breadth(
+                sp_close, ndx_close, ad_sp500, 20
+            )
+            if fig20:
+              st.plotly_chart(fig20, use_container_width=True)
 
           with col_chart2:
-            st.markdown("##### 📊 60 Derniers Jours (Départ à 0%)")
-            if df_chart_60 is not None:
-              st.line_chart(df_chart_60, use_container_width=True)
+            fig60 = creerd_graphique_market_breadth(
+                sp_close, ndx_close, ad_sp500, 60
+            )
+            if fig60:
+              st.plotly_chart(fig60, use_container_width=True)
 
       else:
         st.warning("Erreur lors du traitement des données de marché.")
