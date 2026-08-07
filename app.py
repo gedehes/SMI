@@ -1015,38 +1015,103 @@ with tab3:
 
         st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
 
-        # Graphiques Comparatifs avec départ à 0 et double axe Y lisible
-        if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
-          st.markdown("---")
-          st.subheader(
-              "📈 Comparaison Relative (Départ à 0) : S&P 500, NASDAQ 100 &"
-              " Ligne A/D"
-          )
-          st.caption(
-              "💡 **Interprétation** : Chaque série démarre à **0** au début de"
-              " la période. L'axe de gauche mesure la variation en **%** des"
-              " deux indices, tandis que l'axe de droite mesure le cumul net de"
-              " la **Ligne Avance-Baisse** sans déformer les échelles."
-          )
+       import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
-          col_chart1, col_chart2 = st.columns(2)
+def creerd_graphique_market_breadth(sp_close, ndx_close, ad_sp500, days):
+    """
+    Génère un graphique à 2 niveaux avec axe X partagé :
+    - Haut (Row 1) : S&P 500 et NASDAQ 100 en % (départ à 0)
+    - Bas (Row 2)  : Ligne Avance-Baisse décalée à 0
+    """
+    # Slection des N derniers jours
+    sp = sp_close.tail(days)
+    ndx = ndx_close.tail(days)
+    ad = ad_sp500.tail(days)
+    
+    if sp.empty or ndx.empty or ad.empty:
+        return None
 
-          with col_chart1:
-            fig20 = creerd_graphique_market_breadth(
-                sp_close, ndx_close, ad_sp500, 20
-            )
-            if fig20:
-              st.plotly_chart(fig20, use_container_width=True)
+    # Normalisation au point de départ (0)
+    sp_pct = (sp / sp.iloc[0] - 1) * 100
+    ndx_pct = (ndx / ndx.iloc[0] - 1) * 100
+    ad_norm = ad - ad.iloc[0]
 
-          with col_chart2:
-            fig60 = creerd_graphique_market_breadth(
-                sp_close, ndx_close, ad_sp500, 60
-            )
-            if fig60:
-              st.plotly_chart(fig60, use_container_width=True)
+    # Structure 2 lignes, 1 colonne avec axe X partagé et unique
+    fig = make_subplots(
+        rows=2, 
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        row_heights=[0.6, 0.4],
+        subplot_titles=(f"Performance Relative des Indices ({days}j)", "Ligne d'Avance-Baisse (A/D)")
+    )
 
-      else:
-        st.warning("Erreur lors du traitement des données de marché.")
+    # Graphique du HAUT : S&P 500 et NASDAQ 100 (%)
+    fig.add_trace(
+        go.Scatter(x=sp.index, y=sp_pct, name="S&P 500 (%)", line=dict(color="#1f77b4", width=2)),
+        row=1, col=1
+    )
+    fig.add_trace(
+        go.Scatter(x=ndx.index, y=ndx_pct, name="NASDAQ 100 (%)", line=dict(color="#2ca02c", width=2)),
+        row=1, col=1
+    )
+
+    # Graphique du BAS : Ligne Avance-Baisse
+    fig.add_trace(
+        go.Scatter(x=ad.index, y=ad_norm, name="Ligne A/D", line=dict(color="#ff7f0e", width=1.5)),
+        row=2, col=1
+    )
+
+    # Alignement du survol et des axes
+    fig.update_layout(
+        height=520,
+        hovermode="x unified",
+        showlegend=True,
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
+
+    fig.update_yaxes(title_text="Variation (%)", row=1, col=1)
+    fig.update_yaxes(title_text="Cumul A/D", row=2, col=1)
+    fig.update_xaxes(title_text="Date", row=2, col=1)
+
+    return fig
+Bloc de code Streamlit mis à jour :
+Python
+
+
+# Graphiques Comparatifs avec départ à 0 et sous-graphiques empilés
+if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
+    st.markdown("---")
+    st.subheader(
+        "📈 Comparaison Relative (Départ à 0) : S&P 500, NASDAQ 100 &"
+        " Ligne A/D"
+    )
+    st.caption(
+        "💡 **Interprétation** : Chaque série démarre à **0** au début de"
+        " la période. Le graphique du haut mesure la variation en **%** des"
+        " deux indices, tandis que le graphique du bas mesure le cumul net de"
+        " la **Ligne Avance-Baisse** sur le même axe temporel synchronisé."
+    )
+
+    col_chart1, col_chart2 = st.columns(2)
+
+    with col_chart1:
+        fig20 = creerd_graphique_market_breadth(
+            sp_close, ndx_close, ad_sp500, 20
+        )
+        if fig20:
+            st.plotly_chart(fig20, use_container_width=True)
+
+    with col_chart2:
+        fig60 = creerd_graphique_market_breadth(
+            sp_close, ndx_close, ad_sp500, 60
+        )
+        if fig60:
+            st.plotly_chart(fig60, use_container_width=True)
+
+else:
+    st.warning("Erreur lors du traitement des données de marché.")
 
 # --- ONGLET 4 ---
 with tab4:
