@@ -1017,14 +1017,13 @@ with tab3:
 
        import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-
 def creerd_graphique_market_breadth(sp_close, ndx_close, ad_sp500, days):
     """
     Génère un graphique à 2 niveaux avec axe X partagé :
     - Haut (Row 1) : S&P 500 et NASDAQ 100 en % (départ à 0)
     - Bas (Row 2)  : Ligne Avance-Baisse décalée à 0
     """
-    # Slection des N derniers jours
+    # Sélection des N derniers jours
     sp = sp_close.tail(days)
     ndx = ndx_close.tail(days)
     ad = ad_sp500.tail(days)
@@ -1076,38 +1075,78 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_sp500, days):
     fig.update_xaxes(title_text="Date", row=2, col=1)
 
     return fig
-# Graphiques Comparatifs avec départ à 0 et sous-graphiques empilés
-if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
-    st.markdown("---")
-    st.subheader(
-        "📈 Comparaison Relative (Départ à 0) : S&P 500, NASDAQ 100 &"
-        " Ligne A/D"
-    )
-    st.caption(
-        "💡 **Interprétation** : Chaque série démarre à **0** au début de"
-        " la période. Le graphique du haut mesure la variation en **%** des"
-        " deux indices, tandis que le graphique du bas mesure le cumul net de"
-        " la **Ligne Avance-Baisse** sur le même axe temporel synchronisé."
-    )
 
-    col_chart1, col_chart2 = st.columns(2)
+# --- INTERFACE ET ONGLETS ---
+st.title("📊 Application de Trading & Market Breadth")
 
-    with col_chart1:
-        fig20 = creerd_graphique_market_breadth(
-            sp_close, ndx_close, ad_sp500, 20
+tab1, tab2 = st.tabs(["🚀 Scanner SMI", "📊 Market Breadth"])
+
+with tab1:
+    st.subheader("Scanner SMI Personnel (14, 4, 1, 14, EMA)")
+    bouton_scan = st.button("🚀 Lancer le Scan Hebdomadaire", use_container_width=True)
+
+    if bouton_scan:
+        if not ma_liste:
+            st.warning("⚠️ Veuillez ajouter au moins un ticker dans la liste.")
+        else:
+            with st.spinner("Analyse et synchronisation des données en cours..."):
+                df_result = get_smi_custom(ma_liste)
+                
+                if not df_result.empty:
+                    df_result = df_result.sort_values(by="DIFFÉRENCE", ascending=False)
+                    
+                    def colorier_diff(val):
+                        color = '#118d57' if val >= 0 else '#b71d18'
+                        return f'color: {color}; font-weight: bold'
+                    
+                    df_style = df_result.style.map(colorier_diff, subset=['DIFFÉRENCE'])
+                    
+                    st.success("Analyses terminées !")
+                    st.dataframe(
+                        df_style, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        height=min(40 * len(df_result) + 40, 600)
+                    )
+                else:
+                    st.error("Aucune donnée n'a pu être récupérée pour les tickers configurés.")
+
+with tab2:
+    sp_close, ndx_close, ad_sp500 = charger_donnees_marche()
+
+    # Graphiques Comparatifs avec départ à 0 et sous-graphiques empilés
+    if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
+        st.markdown("---")
+        st.subheader(
+            "📈 Comparaison Relative (Départ à 0) : S&P 500, NASDAQ 100 &"
+            " Ligne A/D"
         )
-        if fig20:
-            st.plotly_chart(fig20, use_container_width=True)
-
-    with col_chart2:
-        fig60 = creerd_graphique_market_breadth(
-            sp_close, ndx_close, ad_sp500, 60
+        st.caption(
+            "💡 **Interprétation** : Chaque série démarre à **0** au début de"
+            " la période. Le graphique du haut mesure la variation en **%** des"
+            " deux indices, tandis que le graphique du bas mesure le cumul net de"
+            " la **Ligne Avance-Baisse** sur le même axe temporel synchronisé."
         )
-        if fig60:
-            st.plotly_chart(fig60, use_container_width=True)
 
-else:
-    st.warning("Erreur lors du traitement des données de marché.")
+        col_chart1, col_chart2 = st.columns(2)
+
+        with col_chart1:
+            fig20 = creerd_graphique_market_breadth(
+                sp_close, ndx_close, ad_sp500, 20
+            )
+            if fig20:
+                st.plotly_chart(fig20, use_container_width=True)
+
+        with col_chart2:
+            fig60 = creerd_graphique_market_breadth(
+                sp_close, ndx_close, ad_sp500, 60
+            )
+            if fig60:
+                st.plotly_chart(fig60, use_container_width=True)
+
+    else:
+        st.warning("Erreur lors du traitement des données de marché.")
+
 
 # --- ONGLET 4 ---
 with tab4:
