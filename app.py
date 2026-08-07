@@ -337,10 +337,11 @@ def colorier_actif_conditionnel(row):
     tendance_ok = "Croissant" in str(row['TENDANCE'])
     volume_ok = "Supérieur" in str(row['Volume hebdo'])
     
-    if diff_ok and tendance_ok and volume_ok:
-        return ['background-color: #118d57; color: white; font-weight: bold']
-    else:
-        return ['background-color: #b71d18; color: white; font-weight: bold']
+    color = '#118d57' if (diff_ok and tendance_ok and volume_ok) else '#b71d18'
+    style_actif = f'background-color: {color}; color: white; font-weight: bold'
+    
+    # Applique la couleur de fond uniquement à la colonne 'ACTIF'
+    return [style_actif if col == 'ACTIF' else '' for col in row.index]
 
 def colorier_statut_vert_rouge(val):
     color = '#118d57' if "Vert" in str(val) or "Sain" in str(val) else '#b71d18'
@@ -402,7 +403,7 @@ with tab1:
                             "Volume sem.": "{:,.0f}",
                             "MM20 Vol": "{:,.0f}"
                         })
-                        .apply(colorier_actif_conditionnel, axis=1, subset=['ACTIF'])
+                        .apply(colorier_actif_conditionnel, axis=1)
                         .map(colorier_diff, subset=['DIFFÉRENCE'])
                         .map(colorier_tendance, subset=['TENDANCE'])
                         .map(colorier_volume, subset=['Volume hebdo'])
