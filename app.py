@@ -9,25 +9,44 @@ st.set_page_config(page_title="Scanner SMI & Breakout", layout="wide")
 
 FILENAME = "mes_tickers.txt"
 
-# Listes de composants pour le calcul du Market Breadth
-SP500_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "TSLA",
-    "JPM", "UNH", "V", "XOM", "MA", "PG", "COST", "JNJ", "HD", "ABBV", "MRK", "NFLX",
-    "AMD", "CRM", "KO", "PEP", "ORCL", "BAC", "WMT", "CVX", "ADBE", "MCD", "CSCO",
-    "WFC", "DIS", "ACN", "ABT", "PM", "INTU", "IBM", "GE", "TXN", "AMAT", "QCOM",
-    "DHR", "CAT", "AMGN", "NEE", "UNP", "LOW", "GS", "HON", "COP", "BA", "BKNG",
-    "NKE", "ISRG", "PLTR", "PFE", "RTX", "SYK", "T", "LMT", "ADP", "MDLZ", "TJX",
-    "BLK", "MMC", "AMT", "C", "VRTX", "BSX", "SCHW", "SBUX", "CI", "GILD", "MO"
-]
+# --- RÉCUPÉRATION AUTOMATIQUE ET DYNAMIQUE DES TICKERS (AVEC CACHE 24H) ---
+@st.cache_data(ttl="1d")
+def obtenir_sp500_tickers():
+    """Récupère la liste à jour du S&P 500 depuis Wikipédia avec liste de secours."""
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        df = pd.read_html(url)[0]
+        tickers = df['Symbol'].str.replace('.', '-', regex=False).tolist()
+        return tickers
+    except Exception as e:
+        st.warning("Impossible de charger le S&P 500 en direct, utilisation de la liste de secours.")
+        return [
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "BRK-B", "LLY", "AVGO", "TSLA",
+            "JPM", "UNH", "V", "XOM", "MA", "PG", "COST", "JNJ", "HD", "ABBV", "MRK", "NFLX",
+            "AMD", "CRM", "KO", "PEP", "ORCL", "BAC", "WMT", "CVX", "ADBE", "MCD", "CSCO",
+            "WFC", "DIS", "ACN", "ABT", "PM", "INTU", "IBM", "GE", "TXN", "AMAT", "QCOM",
+            "DHR", "CAT", "AMGN", "NEE", "UNP", "LOW", "GS", "HON", "COP", "BA", "BKNG"
+        ]
 
-NASDAQ_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX",
-    "AMD", "PEP", "TMUS", "ADBE", "CSCO", "INTU", "AMAT", "QCOM", "TXN", "HON",
-    "CMCSA", "AMGN", "BKNG", "ISRG", "VRTX", "PANW", "ADP", "REGN", "LRCX", "MDLZ",
-    "MU", "MELI", "KLAC", "SNPS", "CDNS", "GILD", "PYPL", "ORLY", "CTAS", "BKR",
-    "MAR", "CSX", "CRWD", "ABNB", "AEP", "NXPI", "FTNT", "MCHP", "WDAY", "KDP",
-    "LULU", "DXCM", "PCAR", "ROST", "KHC", "IDXX", "ODFL", "MNST", "PAYX", "FAST"
-]
+@st.cache_data(ttl="1d")
+def obtenir_nasdaq100_tickers():
+    """Récupère la liste à jour du NASDAQ 100 depuis Wikipédia avec liste de secours."""
+    try:
+        url = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
+        tables = pd.read_html(url)
+        for df in tables:
+            if 'Ticker' in df.columns:
+                return df['Ticker'].str.replace('.', '-', regex=False).tolist()
+            if 'Symbol' in df.columns:
+                return df['Symbol'].str.replace('.', '-', regex=False).tolist()
+        raise ValueError("Colonne de tickers introuvable")
+    except Exception as e:
+        st.warning("Impossible de charger le NASDAQ 100 en direct, utilisation de la liste de secours.")
+        return [
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX",
+            "AMD", "PEP", "TMUS", "ADBE", "CSCO", "INTU", "AMAT", "QCOM", "TXN", "HON",
+            "CMCSA", "AMGN", "BKNG", "ISRG", "VRTX", "PANW", "ADP", "REGN", "LRCX", "MDLZ"
+        ]
 
 def charger_tickers():
     if os.path.exists(FILENAME):
@@ -340,7 +359,6 @@ def colorier_actif_conditionnel(row):
     color = '#118d57' if (diff_ok and tendance_ok and volume_ok) else '#b71d18'
     style_actif = f'background-color: {color}; color: white; font-weight: bold'
     
-    # Applique la couleur de fond uniquement à la colonne 'ACTIF'
     return [style_actif if col == 'ACTIF' else '' for col in row.index]
 
 def colorier_statut_vert_rouge(val):
@@ -438,7 +456,7 @@ with tab2:
                 else:
                     st.warning("Aucune donnée générée pour ces critères.")
 
-# --- ONGLET 3 : MARKET BREADTH ---
+# --- ONGLET 3 : MARKET BREADTH (MIS À JOUR AVEC RECUPERATION AUTOMATIQUE) ---
 with tab3:
     st.subheader("🌐 Analyse de la Santé Globale du Marché (Market Breadth)")
     st.markdown("""
@@ -448,9 +466,14 @@ with tab3:
     """)
     
     if st.button("📊 Calculer le Market Breadth (S&P500 & NASDAQ)", key="btn_mb", use_container_width=True):
-        with st.spinner("Calcul des indicateurs MM200, MM50 et NH/NL en cours..."):
-            mb_sp500 = calculer_market_breadth(SP500_TICKERS, "S&P 500")
-            mb_nasdaq = calculer_market_breadth(NASDAQ_TICKERS, "NASDAQ 100")
+        with st.spinner("Récupération des listes d'actifs à jour et calcul des indicateurs..."):
+            sp500_actuel = obtenir_sp500_tickers()
+            nasdaq100_actuel = obtenir_nasdaq100_tickers()
+            
+            st.caption(f"Actifs scannés : S&P 500 ({len(sp500_actuel)} actions) | NASDAQ 100 ({len(nasdaq100_actuel)} actions)")
+
+            mb_sp500 = calculer_market_breadth(sp500_actuel, "S&P 500")
+            mb_nasdaq = calculer_market_breadth(nasdaq100_actuel, "NASDAQ 100")
             
             res_mb = []
             if mb_sp500: res_mb.append(mb_sp500)
