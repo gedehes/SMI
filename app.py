@@ -484,24 +484,24 @@ def calculer_market_breadth(ticker_list, index_name):
 
 # --- FONCTION DE CRÉATION DU GRAPHIQUE MARKET BREADTH ---
 def creerd_graphique_market_breadth(
-    sp_close, ndx_close, ad_line, n_jours, mm_window
+    sp_close, ndx_close, ad_line, n_jours, mm_window=20
 ):
-  """Génère un graphique à 2 panneaux :
+  """Génère un graphique à 2 panneaux avec une moyenne mobile sur la ligne A/D.
 
-  - Panneau Haut : Performance relative S&P 500 & NASDAQ 100 (%)
-  - Panneau Bas  : Ligne Avance-Baisse (A/D) + Moyenne Mobile (MM) spécifiée par
-  mm_window
+  Paramètres :
+  - mm_window : 20 par défaut (graphe de gauche), à passer à 60 pour celui de
+  droite.
   """
-  # 1. Calcul de la MM sur l'historique complet pour éviter les trous de calcul (NaN)
+  # 1. Calcul de la MM sur l'historique complet pour éviter les NaN au début
   ad_mm_full = ad_line.rolling(window=mm_window).mean()
 
-  # 2. Découpage sur la période sélectionnée (n_jours)
+  # 2. Découpage sur les n_jours
   sp_sub = sp_close.tail(n_jours)
   ndx_sub = ndx_close.tail(n_jours)
   ad_sub = ad_line.tail(n_jours)
   ad_mm_sub = ad_mm_full.tail(n_jours)
 
-  # 3. Alignement sur les dates communes
+  # 3. Alignement des index
   common_idx = sp_sub.index.intersection(ndx_sub.index).intersection(
       ad_sub.index
   )
@@ -513,7 +513,7 @@ def creerd_graphique_market_breadth(
   ad_s = ad_sub.loc[common_idx]
   ad_mm_s = ad_mm_sub.loc[common_idx]
 
-  # 4. Normalisation (Départ à 0 au premier jour de la fenêtre)
+  # 4. Normalisation (base 0 au premier jour)
   sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
   ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
 
@@ -521,7 +521,7 @@ def creerd_graphique_market_breadth(
   ad_zero = ad_s - ad_t0
   ad_mm_zero = ad_mm_s - ad_t0
 
-  # 5. Création de la figure à 2 panneaux (Axe X partagé)
+  # 5. Figure subplots
   fig = make_subplots(
       rows=2,
       cols=1,
@@ -530,7 +530,7 @@ def creerd_graphique_market_breadth(
       row_heights=[0.65, 0.35],
   )
 
-  # --- PANNEAU HAUT (Row 1) : Indices (%) ---
+  # Haut : Indices
   fig.add_trace(
       go.Scatter(
           x=sp_zero.index,
@@ -555,7 +555,7 @@ def creerd_graphique_market_breadth(
       col=1,
   )
 
-  # --- PANNEAU BAS (Row 2) : Ligne A/D + Moyenne Mobile ---
+  # Bas : Ligne A/D + MM
   fig.add_trace(
       go.Scatter(
           x=ad_zero.index,
@@ -572,7 +572,7 @@ def creerd_graphique_market_breadth(
       go.Scatter(
           x=ad_mm_zero.index,
           y=ad_mm_zero,
-          name=f"MM{mm_window} A/D",  # Nom dynamique selon le paramètre transmis
+          name=f"MM{mm_window} A/D",
           line=dict(color="#ffa726", width=1.5, dash="dash"),
           hovertemplate=(
               f"MM{mm_window} A/D: <b>%{{y:+.2f}}</b><extra></extra>"
@@ -582,7 +582,7 @@ def creerd_graphique_market_breadth(
       col=1,
   )
 
-  # 6. Mise en page
+  # Layout
   fig.update_layout(
       title=dict(
           text=(
@@ -618,7 +618,6 @@ def creerd_graphique_market_breadth(
   )
 
   return fig
-
 
 # ==============================================================================
 # INTEGRATION & AFFICHAGE CÔTÉ À CÔTÉ (STREAMLIT)
