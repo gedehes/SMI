@@ -423,7 +423,7 @@ def calculer_market_breadth(ticker_list, index_name):
     daily_declines = (daily_diff < 0).sum(axis=1)
     daily_net = daily_advances - daily_declines
 
-    ad_line_60d = daily_net.cumsum().tail(60)
+    ad_line_full = daily_net.cumsum()
 
     avances = int(daily_advances.iloc[-1])
     baisses = int(daily_declines.iloc[-1])
@@ -471,7 +471,7 @@ def calculer_market_breadth(ticker_list, index_name):
         "Ratio A/B": ratio_ad,
     }
 
-    return res_dict, ad_line_60d
+    return res_dict, ad_line_full
 
   except Exception as e:
     st.error(
@@ -769,22 +769,132 @@ with tab3:
       if res_mb:
         df_mb = pd.DataFrame(res_mb)
 
-        # 1. Bannière d'état TRADING OK / TRADING STOP
-        sp500_mm200_val = mb_sp500["% > MM200"] if mb_sp500 else 0
-        if sp500_mm200_val > 50:
-          st.markdown(
-              "<h2 style='text-align: center; color: #118d57; background-color:"
-              " #e6f4ea; padding: 12px; border-radius: 8px; margin-bottom:"
-              " 20px;'>🟢 TRADING OK</h2>",
-              unsafe_allow_html=True,
-          )
+        # Extraction S&P 500, Nasdaq 100 & VIX (sur 2 ans pour calcul EMA 200)
+        idx_data = yf.download(
+            ["^GSPC", "^NDX", "^VIX"],
+            period="2y",
+            interval="1d",
+            progress=False,
+        )
+        if isinstance(idx_data.columns, pd.MultiIndex):
+          idx_close = idx_data["Close"]
         else:
-          st.markdown(
-              "<h2 style='text-align: center; color: #b71d18; background-color:"
-              " #fce8e6; padding: 12px; border-radius: 8px; margin-bottom:"
-              " 20px;'>🔴 TRADING STOP</h2>",
-              unsafe_allow_html=True,
-          )
+          idx_close = idx_data
+
+        sp_sym = (
+            "^GSPC"
+            if "^GSPC" in idx_close.columns
+            and not idx_close["^GSPC"].dropna().empty
+            else "SPY"
+        )
+        ndx_sym = (
+            "^NDX"
+            if "^NDX" in idx_close.columns
+            and not idx_close["^NDX"].dropna().empty
+            else "QQQ"
+        )
+        vix_sym = "^VIX"
+
+        sp_close = (
+            idx_close[sp_sym].dropna()
+            if sp_sym in idx_close.columns
+            else pd.Series()
+        )
+        ndx_close = (
+            idx_close[ndx_sym].dropna()
+            if ndx_sym in idx_close.columns
+            else pd.Series()
+        )
+        vix_close = (
+            idx_close[vix_sym].dropna()
+            if vix_sym in idx_close.columns
+            else pd.Series()
+        )
+
+        sp_ema200 = (
+            sp_close.ewm(span=200, adjust=False).mean()
+            if not sp_close.empty
+            else pd.Series()
+        )
+        ndx_ema200 = (
+            ndx_close.ewm(span=200, adjust=False).mean()
+            if not ndx_close.empty
+            else pd.Series()
+        )
+        vix_ema200 = (
+            vix_close.ewm(span=200, adjust=False).mean()
+            if not vix_close.empty
+            else pd.Series()
+        )
+
+        # Extraction des valeurs les plus récentes
+        sp500_mm200_val = mb_sp500["% > MM200"] if mb_sp500 else 0
+        vix_val = float(vix_close.iloc[-1]) if not vix_close.empty else 0.0
+        vix_ema_val = (
+            float(vix_ema200.iloc[-1]) if not vix_ema200.empty else 0.0
+        )
+        sp_val = float(sp_close.iloc[-1]) if not sp_close.empty else 0.0
+        sp_ema_val = float(sp_ema200.iloc[-1]) if not sp_ema200.empty else 0.0
+        ndx_val = float(ndx_close.iloc[-1]) if not ndx_close.empty else 0.0
+        ndx_ema_val = (
+            float(ndx_ema200.iloc[-1]) if not ndx_ema200.empty else 0.0
+        )
+
+        # 1. Évaluation des 5 conditions dans l'ordre demandé
+        c1_mm200 = sp500_mm200_val >= 50
+        c2_vix_val = vix_val <= 25
+        c3_vix_ema = vix_val <= vix_ema_val
+        c4_sp_ema = sp_val > sp_ema_val
+        c5_ndx_ema = ndx_val > ndx_ema_val
+
+        trading_ok = (
+            c1_mm200 and c2_vix_val and c3_vix_ema and c4_sp_ema and c5_ndx_ema
+        )
+
+        status_title = "🟢 TRADING OK" if trading_ok else "🔴 TRADING STOP"
+        status_bg = "#e6f4ea" if trading_ok else "#fce8e6"
+        status_color = "#118d57" if trading_ok else "#b71d18"
+
+        def fmt_item_html(label, is_green):
+          color = "#118d57" if is_green else "#b71d18"
+          icon = "●" if is_green else "●"
+          return f"<li style='color: {color}; margin-bottom: 4px; font-weight: bold;'>{icon} {label}</li>"
+
+        html_items = [
+            fmt_item_html(
+                f"Chiffres MM200 (S&P 500 > MM200) : {sp500_mm200_val:.1f}%"
+                " (Vert si ≥ 50%)",
+                c1_mm200,
+            ),
+            fmt_item_html(
+                f"VIX Actuel : {vix_val:.2f} (Vert si ≤ 25)", c2_vix_val
+            ),
+            fmt_item_html(
+                f"VIX vs EMA200 : {vix_val:.2f} vs {vix_ema_val:.2f} (Vert si VIX"
+                " ≤ EMA200)",
+                c3_vix_ema,
+            ),
+            fmt_item_html(
+                f"S&P 500 vs EMA200 : {sp_val:.1f} vs {sp_ema_val:.1f} (Vert si"
+                " au-dessus)",
+                c4_sp_ema,
+            ),
+            fmt_item_html(
+                f"NASDAQ 100 vs EMA200 : {ndx_val:.1f} vs {ndx_ema_val:.1f}"
+                " (Vert si au-dessus)",
+                c5_ndx_ema,
+            ),
+        ]
+
+        html_banner = f"""
+        <div style='text-align: center; background-color: {status_bg}; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 2px solid {status_color};'>
+            <h2 style='color: {status_color}; margin: 0 0 12px 0;'>{status_title}</h2>
+            <ul style='list-style-type: none; padding-left: 0; font-size: 13px; display: inline-block; text-align: left; margin: 0;'>
+                {''.join(html_items)}
+            </ul>
+        </div>
+        """
+        st.markdown(html_banner, unsafe_allow_html=True)
 
         # 2. Tableau Synthétique
         df_mb_style = df_mb.style.format({
@@ -801,84 +911,57 @@ with tab3:
 
         st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
 
-        # 3. Graphique Comparatif à 3 Lignes (60 Derniers Jours)
-        if ad_sp500 is not None:
+        # 3. Graphiques Comparatifs à 3 Lignes Superposées à 0% (20 Jours & 60 Jours)
+        if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
           st.markdown("---")
           st.subheader(
-              "📈 Comparaison Normalisée (0 à 100) sur 60 Jours : S&P 500,"
-              " NASDAQ 100 & Ligne A/B"
+              "📈 Comparaison Relative Superposée à 0% : S&P 500, NASDAQ 100 &"
+              " Ligne A/B"
           )
           st.caption(
-              "💡 **Interprétation** : Chaque série est ramenée sur une"
-              " **échelle de 0 à 100** (0 = plus bas sur 60 jours, 100 = plus"
-              " haut). Cela permet de comparer visuellement la dynamique sans"
-              " déformer les indices. Si les indices font de nouveaux sommets"
-              " (proches de 100) mais que la ligne A/B décroche bas, il y a"
-              " divergence."
+              "💡 **Interprétation** : Chaque ligne démarre exactement à **0.0%**"
+              " sur le premier jour du graphique. Cela permet de comparer"
+              " directement la dynamique des variations sans distorsion d'échelle."
           )
 
-          # Téléchargement des historiques des indices
-          indices_data = yf.download(
-              ["^GSPC", "^NDX"], period="6mo", interval="1d", progress=False
-          )
-          if isinstance(indices_data.columns, pd.MultiIndex):
-            idx_close = indices_data["Close"]
-          else:
-            idx_close = indices_data
+          def generer_df_chart_zero(n_jours):
+            sp_sub = sp_close.tail(n_jours)
+            ndx_sub = ndx_close.tail(n_jours)
+            ad_sub = ad_sp500.tail(n_jours)
 
-          # Secours avec les ETF SPY / QQQ si ^GSPC / ^NDX échouent
-          if (
-              "^GSPC" not in idx_close.columns
-              or idx_close["^GSPC"].dropna().empty
-          ):
-            indices_data = yf.download(
-                ["SPY", "QQQ"], period="6mo", interval="1d", progress=False
+            common_idx = sp_sub.index.intersection(ndx_sub.index).intersection(
+                ad_sub.index
             )
-            if isinstance(indices_data.columns, pd.MultiIndex):
-              idx_close = indices_data["Close"]
-            else:
-              idx_close = indices_data
-            sp_symbol, ndx_symbol = "SPY", "QQQ"
-          else:
-            sp_symbol, ndx_symbol = "^GSPC", "^NDX"
-
-          if (
-              sp_symbol in idx_close.columns
-              and ndx_symbol in idx_close.columns
-          ):
-            sp_series = idx_close[sp_symbol].dropna().tail(60)
-            ndx_series = idx_close[ndx_symbol].dropna().tail(60)
-
-            # Alignement des dates communes
-            common_idx = (
-                sp_series.index.intersection(ndx_series.index).intersection(
-                    ad_sp500.index
-                )
-            )
-
             if len(common_idx) > 0:
-              sp_sub = sp_series.loc[common_idx]
-              ndx_sub = ndx_series.loc[common_idx]
-              ad_sub = ad_sp500.loc[common_idx]
+              sp_s = sp_sub.loc[common_idx]
+              ndx_s = ndx_sub.loc[common_idx]
+              ad_s = ad_sub.loc[common_idx]
 
-              # Normalisation Min-Max (0 à 100)
-              sp_norm = (
-                  (sp_sub - sp_sub.min()) / (sp_sub.max() - sp_sub.min())
-              ) * 100
-              ndx_norm = (
-                  (ndx_sub - ndx_sub.min()) / (ndx_sub.max() - ndx_sub.min())
-              ) * 100
-              ad_norm = (
-                  (ad_sub - ad_sub.min()) / (ad_sub.max() - ad_sub.min())
-              ) * 100
+              sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
+              ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
+              ad_zero = ((ad_s - ad_s.iloc[0]) / len(sp500_actuel)) * 100
 
-              df_chart_3lines = pd.DataFrame({
-                  "S&P 500 (Min-Max 0-100)": sp_norm,
-                  "NASDAQ 100 (Min-Max 0-100)": ndx_norm,
-                  "Ligne Avance-Baisse (Min-Max 0-100)": ad_norm,
+              return pd.DataFrame({
+                  "S&P 500 (%)": sp_zero,
+                  "NASDAQ 100 (%)": ndx_zero,
+                  "Ligne Avance-Baisse (%)": ad_zero,
               })
+            return None
 
-              st.line_chart(df_chart_3lines, use_container_width=True)
+          df_chart_20 = generer_df_chart_zero(20)
+          df_chart_60 = generer_df_chart_zero(60)
+
+          col_chart1, col_chart2 = st.columns(2)
+
+          with col_chart1:
+            st.markdown("##### 📊 20 Derniers Jours (Départ à 0%)")
+            if df_chart_20 is not None:
+              st.line_chart(df_chart_20, use_container_width=True)
+
+          with col_chart2:
+            st.markdown("##### 📊 60 Derniers Jours (Départ à 0%)")
+            if df_chart_60 is not None:
+              st.line_chart(df_chart_60, use_container_width=True)
 
       else:
         st.warning("Erreur lors du traitement des données de marché.")
