@@ -385,7 +385,7 @@ def calculer_market_breadth(ticker_list, index_name):
     if isinstance(data.columns, pd.MultiIndex):
       close_data = data["Close"].dropna(how="all", axis=1)
       high_data = data["High"].dropna(how="all", axis=1)
-      low_data = data["Low"].dropna(how="all", axis=1)
+      low_data = data[["Low"]].dropna(how="all", axis=1)
     else:
       close_data = data[["Close"]].dropna(how="all", axis=1)
       high_data = data[["High"]].dropna(how="all", axis=1)
@@ -805,17 +805,16 @@ with tab3:
         if ad_sp500 is not None:
           st.markdown("---")
           st.subheader(
-              "📈 Comparaison à 3 Lignes sur 60 Jours : S&P 500, NASDAQ 100 et"
-              " Ligne Avance-Baisse"
+              "📈 Comparaison Normalisée (0 à 100) sur 60 Jours : S&P 500,"
+              " NASDAQ 100 & Ligne A/B"
           )
           st.caption(
-              "💡 **Interprétation** : Les 3 courbes sont exprimées en"
-              " **pourcentage de variation depuis le début de la période"
-              " (0%)** pour pouvoir comparer directement leur dynamique. Si les"
-              " indices montent et que la ligne avance-baisse suit la même"
-              " hausse, la tendance est solide. Si les indices montent mais que"
-              " la ligne A/B décroche, la hausse est portée par un très petit"
-              " nombre d'entreprises."
+              "💡 **Interprétation** : Chaque série est ramenée sur une"
+              " **échelle de 0 à 100** (0 = plus bas sur 60 jours, 100 = plus"
+              " haut). Cela permet de comparer visuellement la dynamique sans"
+              " déformer les indices. Si les indices font de nouveaux sommets"
+              " (proches de 100) mais que la ligne A/B décroche bas, il y a"
+              " divergence."
           )
 
           # Téléchargement des historiques des indices
@@ -862,17 +861,21 @@ with tab3:
               ndx_sub = ndx_series.loc[common_idx]
               ad_sub = ad_sp500.loc[common_idx]
 
-              # Normalisation en % de variation à partir de 0% (Jour 1 = 0%)
-              sp_norm = (sp_sub / sp_sub.iloc[0] - 1) * 100
-              ndx_norm = (ndx_sub / ndx_sub.iloc[0] - 1) * 100
-
-              # Normalisation de la ligne Avance/Baisse cumulée (en % du nombre d'actions scannées)
-              ad_norm = ((ad_sub - ad_sub.iloc[0]) / len(sp500_actuel)) * 100
+              # Normalisation Min-Max (0 à 100)
+              sp_norm = (
+                  (sp_sub - sp_sub.min()) / (sp_sub.max() - sp_sub.min())
+              ) * 100
+              ndx_norm = (
+                  (ndx_sub - ndx_sub.min()) / (ndx_sub.max() - ndx_sub.min())
+              ) * 100
+              ad_norm = (
+                  (ad_sub - ad_sub.min()) / (ad_sub.max() - ad_sub.min())
+              ) * 100
 
               df_chart_3lines = pd.DataFrame({
-                  "S&P 500 (%)": sp_norm,
-                  "NASDAQ 100 (%)": ndx_norm,
-                  "Ligne Avance-Baisse S&P500 (%)": ad_norm,
+                  "S&P 500 (Min-Max 0-100)": sp_norm,
+                  "NASDAQ 100 (Min-Max 0-100)": ndx_norm,
+                  "Ligne Avance-Baisse (Min-Max 0-100)": ad_norm,
               })
 
               st.line_chart(df_chart_3lines, use_container_width=True)
