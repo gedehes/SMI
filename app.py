@@ -11,7 +11,6 @@ st.set_page_config(page_title="Scanner SMI & Breakout", layout="wide")
 
 FILENAME = "mes_tickers.txt"
 
-# En-tête HTTP pour imiter un navigateur web et éviter le blocage 403
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,"
@@ -24,11 +23,9 @@ HEADERS = {
 }
 
 
-# --- RÉCUPÉRATION AUTOMATIQUE DES TICKERS (SLICKCHARTS -> STOCKANALYSIS -> WIKIPÉDIA -> FALLBACK) ---
+# --- RÉCUPÉRATION AUTOMATIQUE DES TICKERS ---
 @st.cache_data(ttl=86400)
 def obtenir_sp500_tickers():
-  """Récupère les ~500 actions du S&P 500 depuis Slickcharts, StockAnalysis, Wikipédia ou liste fixe."""
-  # 1. Tentative sur Slickcharts
   try:
     url = "https://www.slickcharts.com/sp500"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -47,7 +44,6 @@ def obtenir_sp500_tickers():
   except Exception:
     pass
 
-  # 2. Secours sur StockAnalysis
   try:
     url = "https://stockanalysis.com/list/sp-500-stocks/"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -71,7 +67,6 @@ def obtenir_sp500_tickers():
   except Exception:
     pass
 
-  # 3. Secours sur Wikipédia
   try:
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -89,7 +84,6 @@ def obtenir_sp500_tickers():
   except Exception:
     pass
 
-  # 4. Liste fixe de sécurité
   return [
       "AAPL",
       "MSFT",
@@ -151,8 +145,6 @@ def obtenir_sp500_tickers():
 
 @st.cache_data(ttl=86400)
 def obtenir_nasdaq100_tickers():
-  """Récupère les ~100 actions du NASDAQ 100 depuis Slickcharts, StockAnalysis, Wikipédia ou liste fixe."""
-  # 1. Tentative sur Slickcharts
   try:
     url = "https://www.slickcharts.com/nasdaq100"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -171,7 +163,6 @@ def obtenir_nasdaq100_tickers():
   except Exception:
     pass
 
-  # 2. Secours sur StockAnalysis
   try:
     url = "https://stockanalysis.com/list/nasdaq-100-stocks/"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -195,7 +186,6 @@ def obtenir_nasdaq100_tickers():
   except Exception:
     pass
 
-  # 3. Secours sur Wikipédia
   try:
     url = "https://en.wikipedia.org/wiki/List_of_NASDAQ-100_companies"
     response = requests.get(url, headers=HEADERS, timeout=10)
@@ -220,7 +210,6 @@ def obtenir_nasdaq100_tickers():
   except Exception:
     pass
 
-  # 4. Liste fixe de sécurité
   return [
       "AAPL",
       "MSFT",
@@ -276,7 +265,7 @@ def aplatir_donnees(df):
   return df
 
 
-# --- CALCUL DU SMI & VOLUME (ONGLETS 1 & 4) ---
+# --- CALCUL DU SMI & VOLUME ---
 def calculer_smi_watchlist(ticker_list):
   results = []
   for ticker in ticker_list:
@@ -356,7 +345,7 @@ def calculer_smi_watchlist(ticker_list):
   return pd.DataFrame(results)
 
 
-# --- CALCUL DES NIVEAUX D'ENTRÉE (DONCHIAN 20W - ONGLET 2) ---
+# --- CALCUL DONCHIAN 20W ---
 def calculer_ordres_entree(ticker_list):
   results = []
   for ticker in ticker_list:
@@ -386,7 +375,7 @@ def calculer_ordres_entree(ticker_list):
   return pd.DataFrame(results)
 
 
-# --- CALCUL DU MARKET BREADTH COMPLET & HISTORIQUE A/D LINE (ONGLET 3) ---
+# --- MARKET BREADTH ---
 def calculer_market_breadth(ticker_list, index_name):
   try:
     data = yf.download(ticker_list, period="1y", interval="1d", progress=False)
@@ -409,9 +398,8 @@ def calculer_market_breadth(ticker_list, index_name):
     pct_mm200 = (au_dessus_200.sum() / tot_200 * 100) if tot_200 > 0 else 0
     etat_mm200 = "✅ Sain" if pct_mm200 >= 60 else "🚨 Fragile"
 
-    # 2. MM50 Daily (Score + Tendance)
+    # 2. MM50 Daily
     mm50 = close_data.rolling(window=50).mean()
-
     au_dessus_50_today = close_data.iloc[-1] > mm50.iloc[-1]
     tot_50_today = au_dessus_50_today.dropna().count()
     pct_mm50_today = (
@@ -429,13 +417,12 @@ def calculer_market_breadth(ticker_list, index_name):
         "✅ Vert" if (pct_mm50_today > 50 and mm50_croissant) else "🚨 Rouge"
     )
 
-    # 3. Avance / Baisse & Ligne Avance-Baisse Cumulée
+    # 3. Avances / Baisses & Ligne Avance-Baisse Cumulée
     daily_diff = close_data.diff()
     daily_advances = (daily_diff > 0).sum(axis=1)
     daily_declines = (daily_diff < 0).sum(axis=1)
     daily_net = daily_advances - daily_declines
 
-    # Ligne Avance-Baisse cumulée sur les 60 derniers jours de trading
     ad_line_60d = daily_net.cumsum().tail(60)
 
     avances = int(daily_advances.iloc[-1])
@@ -443,7 +430,7 @@ def calculer_market_breadth(ticker_list, index_name):
     avances_nettes = avances - baisses
     ratio_ad = avances / baisses if baisses > 0 else avances
 
-    # 4. Plus Hauts vs Plus Bas (NH - NL 52 Semaines / 252 Jours)
+    # 4. NH / NL
     high_52w = high_data.rolling(window=252).max()
     low_52w = low_data.rolling(window=252).min()
 
@@ -493,7 +480,7 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
-# --- CALCUL DES INDICATEURS AVANCÉS (ONGLET 5) ---
+# --- INDICATEURS AVANCÉS ---
 def calculer_indicateurs_techniques_avances(ticker_list):
   results = []
   for ticker in ticker_list:
@@ -602,7 +589,7 @@ def calculer_indicateurs_techniques_avances(ticker_list):
   return pd.DataFrame(results)
 
 
-# --- STYLISATION ET COULEURS ---
+# --- STYLISATION ---
 def colorier_diff(val):
   try:
     color = "#118d57" if float(val) >= 0 else "#b71d18"
@@ -637,7 +624,7 @@ def colorier_statut_vert_rouge(val):
   return f"color: {color}; font-weight: bold"
 
 
-# --- INTERFACE UTILISATEUR STREAMLIT ---
+# --- INTERFACE STREAMLIT ---
 st.title("📊 Scanner SMI & Breakout")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -648,7 +635,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📈 Indicateurs Avancés",
 ])
 
-# --- ONGLET 1 : BREAKOUT MOMENTUM ---
+# --- ONGLET 1 ---
 with tab1:
   st.subheader("Analyse Breakout Momentum")
   entree_flash = st.text_area(
@@ -715,7 +702,7 @@ with tab1:
         else:
           st.warning("Impossible de générer l'analyse.")
 
-# --- ONGLET 2 : ENTRÉE ---
+# --- ONGLET 2 ---
 with tab2:
   st.subheader("Niveaux de Prix d'Entrée (Donchian 20 Semaines)")
   entree_ordres = st.text_area(
@@ -758,7 +745,7 @@ with tab3:
       use_container_width=True,
   ):
     with st.spinner(
-        "Extraction des listes et calcul de la santé du marché..."
+        "Extraction des données et calcul de la santé du marché..."
     ):
       sp500_actuel = obtenir_sp500_tickers()
       nasdaq100_actuel = obtenir_nasdaq100_tickers()
@@ -782,7 +769,7 @@ with tab3:
       if res_mb:
         df_mb = pd.DataFrame(res_mb)
 
-        # 1. Bannière TRADING OK / TRADING STOP (basée sur le S&P 500 MM200 > 50%)
+        # 1. Bannière d'état TRADING OK / TRADING STOP
         sp500_mm200_val = mb_sp500["% > MM200"] if mb_sp500 else 0
         if sp500_mm200_val > 50:
           st.markdown(
@@ -799,7 +786,7 @@ with tab3:
               unsafe_allow_html=True,
           )
 
-        # 2. Tableau Synthétique Complet du Market Breadth
+        # 2. Tableau Synthétique
         df_mb_style = df_mb.style.format({
             "% > MM200": "{:.1f}%",
             "% > MM50": "{:.1f}%",
@@ -814,30 +801,86 @@ with tab3:
 
         st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
 
-        # 3. Graphique de la Ligne Avance-Baisse Cumulée (60 jours)
-        if ad_sp500 is not None and ad_nasdaq is not None:
+        # 3. Graphique Comparatif à 3 Lignes (60 Derniers Jours)
+        if ad_sp500 is not None:
           st.markdown("---")
           st.subheader(
-              "📈 Ligne Avance-Baisse Cumulée (60 derniers jours de trading)"
+              "📈 Comparaison à 3 Lignes sur 60 Jours : S&P 500, NASDAQ 100 et"
+              " Ligne Avance-Baisse"
           )
           st.caption(
-              "💡 **Analyse de la hausse** : Si les indices montent et la"
-              " ligne avance-baisse monte également, la hausse est solide et"
-              " soutenue par une majorité d'actions. Si les indices montent"
-              " mais que la ligne baisse, la hausse est tirée par seulement"
-              " une poignée d'entreprises."
+              "💡 **Interprétation** : Les 3 courbes sont exprimées en"
+              " **pourcentage de variation depuis le début de la période"
+              " (0%)** pour pouvoir comparer directement leur dynamique. Si les"
+              " indices montent et que la ligne avance-baisse suit la même"
+              " hausse, la tendance est solide. Si les indices montent mais que"
+              " la ligne A/B décroche, la hausse est portée par un très petit"
+              " nombre d'entreprises."
           )
 
-          df_chart = pd.DataFrame(
-              {"S&P 500": ad_sp500, "NASDAQ 100": ad_nasdaq}
-          ).dropna()
+          # Téléchargement des historiques des indices
+          indices_data = yf.download(
+              ["^GSPC", "^NDX"], period="6mo", interval="1d", progress=False
+          )
+          if isinstance(indices_data.columns, pd.MultiIndex):
+            idx_close = indices_data["Close"]
+          else:
+            idx_close = indices_data
 
-          st.line_chart(df_chart, use_container_width=True)
+          # Secours avec les ETF SPY / QQQ si ^GSPC / ^NDX échouent
+          if (
+              "^GSPC" not in idx_close.columns
+              or idx_close["^GSPC"].dropna().empty
+          ):
+            indices_data = yf.download(
+                ["SPY", "QQQ"], period="6mo", interval="1d", progress=False
+            )
+            if isinstance(indices_data.columns, pd.MultiIndex):
+              idx_close = indices_data["Close"]
+            else:
+              idx_close = indices_data
+            sp_symbol, ndx_symbol = "SPY", "QQQ"
+          else:
+            sp_symbol, ndx_symbol = "^GSPC", "^NDX"
+
+          if (
+              sp_symbol in idx_close.columns
+              and ndx_symbol in idx_close.columns
+          ):
+            sp_series = idx_close[sp_symbol].dropna().tail(60)
+            ndx_series = idx_close[ndx_symbol].dropna().tail(60)
+
+            # Alignement des dates communes
+            common_idx = (
+                sp_series.index.intersection(ndx_series.index).intersection(
+                    ad_sp500.index
+                )
+            )
+
+            if len(common_idx) > 0:
+              sp_sub = sp_series.loc[common_idx]
+              ndx_sub = ndx_series.loc[common_idx]
+              ad_sub = ad_sp500.loc[common_idx]
+
+              # Normalisation en % de variation à partir de 0% (Jour 1 = 0%)
+              sp_norm = (sp_sub / sp_sub.iloc[0] - 1) * 100
+              ndx_norm = (ndx_sub / ndx_sub.iloc[0] - 1) * 100
+
+              # Normalisation de la ligne Avance/Baisse cumulée (en % du nombre d'actions scannées)
+              ad_norm = ((ad_sub - ad_sub.iloc[0]) / len(sp500_actuel)) * 100
+
+              df_chart_3lines = pd.DataFrame({
+                  "S&P 500 (%)": sp_norm,
+                  "NASDAQ 100 (%)": ndx_norm,
+                  "Ligne Avance-Baisse S&P500 (%)": ad_norm,
+              })
+
+              st.line_chart(df_chart_3lines, use_container_width=True)
 
       else:
         st.warning("Erreur lors du traitement des données de marché.")
 
-# --- ONGLET 4 : LISTE ENREGISTRÉE ---
+# --- ONGLET 4 ---
 with tab4:
   st.subheader("Votre Watchlist")
   tickers_sauvegardes = charger_tickers()
@@ -872,7 +915,7 @@ with tab4:
       else:
         st.warning("Aucune donnée n'a pu être récupérée.")
 
-# --- ONGLET 5 : TABLEAU AVANCÉ ---
+# --- ONGLET 5 ---
 with tab5:
   st.subheader("Tableau de Synthèse Technique Multi-Indicateurs")
   entree_tab5 = st.text_area(
