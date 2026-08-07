@@ -386,12 +386,12 @@ def calculer_ordres_entree(ticker_list):
   return pd.DataFrame(results)
 
 
-# --- CALCUL DU MARKET BREADTH COMPLET (ONGLET 3) ---
+# --- CALCUL DU MARKET BREADTH COMPLET & HISTORIQUE A/D LINE (ONGLET 3) ---
 def calculer_market_breadth(ticker_list, index_name):
   try:
-    data = yf.download(ticker_list, period="2y", interval="1d", progress=False)
+    data = yf.download(ticker_list, period="1y", interval="1d", progress=False)
     if data.empty:
-      return None
+      return None, None
 
     if isinstance(data.columns, pd.MultiIndex):
       close_data = data["Close"].dropna(how="all", axis=1)
@@ -429,22 +429,30 @@ def calculer_market_breadth(ticker_list, index_name):
         "✅ Vert" if (pct_mm50_today > 50 and mm50_croissant) else "🚨 Rouge"
     )
 
-    # 3. Avance / Baisse (Variations Journalières)
-    variations = close_data.iloc[-1] - close_data.iloc[-2]
-    avances = (variations > 0).sum()
-    baisses = (variations < 0).sum()
+    # 3. Avance / Baisse & Ligne Avance-Baisse Cumulée
+    daily_diff = close_data.diff()
+    daily_advances = (daily_diff > 0).sum(axis=1)
+    daily_declines = (daily_diff < 0).sum(axis=1)
+    daily_net = daily_advances - daily_declines
+
+    # Ligne Avance-Baisse cumulée sur les 60 derniers jours de trading
+    ad_line_60d = daily_net.cumsum().tail(60)
+
+    avances = int(daily_advances.iloc[-1])
+    baisses = int(daily_declines.iloc[-1])
+    avances_nettes = avances - baisses
     ratio_ad = avances / baisses if baisses > 0 else avances
 
     # 4. Plus Hauts vs Plus Bas (NH - NL 52 Semaines / 252 Jours)
     high_52w = high_data.rolling(window=252).max()
     low_52w = low_data.rolling(window=252).min()
 
-    nh_today = (high_data.iloc[-1] >= high_52w.iloc[-1]).sum()
-    nl_today = (low_data.iloc[-1] <= low_52w.iloc[-1]).sum()
+    nh_today = int((high_data.iloc[-1] >= high_52w.iloc[-1]).sum())
+    nl_today = int((low_data.iloc[-1] <= low_52w.iloc[-1]).sum())
     net_nh_nl_today = nh_today - nl_today
 
-    nh_prev = (high_data.iloc[-2] >= high_52w.iloc[-2]).sum()
-    nl_prev = (low_data.iloc[-2] <= low_52w.iloc[-2]).sum()
+    nh_prev = int((high_data.iloc[-2] >= high_52w.iloc[-2]).sum())
+    nl_prev = int((low_data.iloc[-2] <= low_52w.iloc[-2]).sum())
     net_nh_nl_prev = nh_prev - nl_prev
 
     nh_nl_croissant = net_nh_nl_today > net_nh_nl_prev
@@ -453,7 +461,7 @@ def calculer_market_breadth(ticker_list, index_name):
         "✅ Vert" if (nh_nl_positif and nh_nl_croissant) else "🚨 Rouge"
     )
 
-    return {
+    res_dict = {
         "Indice": index_name,
         "% > MM200": pct_mm200,
         "État MM200": etat_mm200,
@@ -465,19 +473,24 @@ def calculer_market_breadth(ticker_list, index_name):
         "NH (Plus Hauts)": nh_today,
         "NL (Plus Bas)": nl_today,
         "Net (NH - NL)": net_nh_nl_today,
+        "Net (NH - NL) Veille": net_nh_nl_prev,
         "NH/NL Tendance": (
             "🔼 Croissant" if nh_nl_croissant else "🔽 Décroissant"
         ),
         "État NH/NL": etat_nh_nl,
         "Avances": avances,
         "Baisses": baisses,
+        "Avances Nettes": avances_nettes,
         "Ratio A/B": ratio_ad,
     }
+
+    return res_dict, ad_line_60d
+
   except Exception as e:
     st.error(
         f"Erreur lors du calcul du Market Breadth ({index_name}) : {str(e)}"
     )
-    return None
+    return None, None
 
 
 # --- CALCUL DES INDICATEURS AVANCÉS (ONGLET 5) ---
@@ -738,11 +751,6 @@ with tab2:
 # --- ONGLET 3 : MARKET BREADTH ---
 with tab3:
   st.subheader("🌐 Analyse de la Santé Globale du Marché (Market Breadth)")
-  st.markdown("""
-    * **MM200** : Marché Sain si > 60%.
-    * **MM50** : Vert si > 50% ET croissant (vs veille).
-    * **NH / NL (Ligne Avance-Baisse High/Low)** : Vert si Nouveaux Plus Hauts > Nouveaux Plus Bas (Net > 0) ET croissant (vs veille).
-    """)
 
   if st.button(
       "📊 Calculer le Market Breadth (S&P500 & NASDAQ)",
@@ -750,8 +758,7 @@ with tab3:
       use_container_width=True,
   ):
     with st.spinner(
-        "Extraction des listes Slickcharts / StockAnalysis / Wikipédia et"
-        " calcul du Market Breadth..."
+        "Extraction des listes et calcul de la santé du marché..."
     ):
       sp500_actuel = obtenir_sp500_tickers()
       nasdaq100_actuel = obtenir_nasdaq100_tickers()
@@ -761,8 +768,10 @@ with tab3:
           f" ({len(nasdaq100_actuel)} actions)"
       )
 
-      mb_sp500 = calculer_market_breadth(sp500_actuel, "S&P 500")
-      mb_nasdaq = calculer_market_breadth(nasdaq100_actuel, "NASDAQ 100")
+      mb_sp500, ad_sp500 = calculer_market_breadth(sp500_actuel, "S&P 500")
+      mb_nasdaq, ad_nasdaq = calculer_market_breadth(
+          nasdaq100_actuel, "NASDAQ 100"
+      )
 
       res_mb = []
       if mb_sp500:
@@ -773,41 +782,30 @@ with tab3:
       if res_mb:
         df_mb = pd.DataFrame(res_mb)
 
-        # Cartes de métriques
-        col1, col2 = st.columns(2)
-        with col1:
-          st.markdown("### 🇺🇸 S&P 500")
-          st.metric(
-              "Score MM50 (% > MM50)",
-              f"{mb_sp500['% > MM50']:.1f}%",
-              delta=f"Statut : {mb_sp500['État MM50']}",
+        # 1. Bannière TRADING OK / TRADING STOP (basée sur le S&P 500 MM200 > 50%)
+        sp500_mm200_val = mb_sp500["% > MM200"] if mb_sp500 else 0
+        if sp500_mm200_val > 50:
+          st.markdown(
+              "<h2 style='text-align: center; color: #118d57; background-color:"
+              " #e6f4ea; padding: 12px; border-radius: 8px; margin-bottom:"
+              " 20px;'>🟢 TRADING OK</h2>",
+              unsafe_allow_html=True,
           )
-          st.metric(
-              "Net NH - NL (Nouveaux H/B)",
-              f"{mb_sp500['Net (NH - NL)']:+d}",
-              delta=f"Statut NH/NL : {mb_sp500['État NH/NL']}",
-          )
-
-        with col2:
-          st.markdown("### 💻 NASDAQ 100")
-          st.metric(
-              "Score MM50 (% > MM50)",
-              f"{mb_nasdaq['% > MM50']:.1f}%",
-              delta=f"Statut : {mb_nasdaq['État MM50']}",
-          )
-          st.metric(
-              "Net NH - NL (Nouveaux H/B)",
-              f"{mb_nasdaq['Net (NH - NL)']:+d}",
-              delta=f"Statut NH/NL : {mb_nasdaq['État NH/NL']}",
+        else:
+          st.markdown(
+              "<h2 style='text-align: center; color: #b71d18; background-color:"
+              " #fce8e6; padding: 12px; border-radius: 8px; margin-bottom:"
+              " 20px;'>🔴 TRADING STOP</h2>",
+              unsafe_allow_html=True,
           )
 
-        st.markdown("---")
-        st.subheader("📋 Tableau Synthétique du Market Breadth")
-
+        # 2. Tableau Synthétique Complet du Market Breadth
         df_mb_style = df_mb.style.format({
             "% > MM200": "{:.1f}%",
             "% > MM50": "{:.1f}%",
             "Net (NH - NL)": "{:+d}",
+            "Net (NH - NL) Veille": "{:+d}",
+            "Avances Nettes": "{:+d}",
             "Ratio A/B": "{:.2f}",
         }).map(
             colorier_statut_vert_rouge,
@@ -815,6 +813,27 @@ with tab3:
         )
 
         st.dataframe(df_mb_style, use_container_width=True, hide_index=True)
+
+        # 3. Graphique de la Ligne Avance-Baisse Cumulée (60 jours)
+        if ad_sp500 is not None and ad_nasdaq is not None:
+          st.markdown("---")
+          st.subheader(
+              "📈 Ligne Avance-Baisse Cumulée (60 derniers jours de trading)"
+          )
+          st.caption(
+              "💡 **Analyse de la hausse** : Si les indices montent et la"
+              " ligne avance-baisse monte également, la hausse est solide et"
+              " soutenue par une majorité d'actions. Si les indices montent"
+              " mais que la ligne baisse, la hausse est tirée par seulement"
+              " une poignée d'entreprises."
+          )
+
+          df_chart = pd.DataFrame(
+              {"S&P 500": ad_sp500, "NASDAQ 100": ad_nasdaq}
+          ).dropna()
+
+          st.line_chart(df_chart, use_container_width=True)
+
       else:
         st.warning("Erreur lors du traitement des données de marché.")
 
