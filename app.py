@@ -482,6 +482,10 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+
 # --- FONCTION DE CRÉATION DU GRAPHIQUE MARKET BREADTH ---
 def creerd_graphique_market_breadth(
     sp_close, ndx_close, ad_line, n_jours, mm_window=20
@@ -616,7 +620,15 @@ def creerd_graphique_market_breadth(
       zerolinewidth=1,
       zerolinecolor="#666666",
   )
-# Ligne 1112 : Graphique de gauche (MM20 par défaut ou explicite)
+
+  return fig
+
+
+# ==============================================================================
+# APPELS EXTERNES (HORS DE LA FONCTION)
+# ==============================================================================
+
+# Graphique de gauche (MM20)
 fig20 = creerd_graphique_market_breadth(
     sp_close, ndx_close, ad_sp500, n_jours=20, mm_window=20
 )
@@ -625,7 +637,6 @@ fig20 = creerd_graphique_market_breadth(
 fig60 = creerd_graphique_market_breadth(
     sp_close, ndx_close, ad_sp500, n_jours=60, mm_window=60
 )
-  return fig
 
 # ==============================================================================
 # INTEGRATION & AFFICHAGE CÔTÉ À CÔTÉ (STREAMLIT)
