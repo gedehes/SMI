@@ -1076,10 +1076,6 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_sp500, days):
     fig.update_xaxes(title_text="Date", row=2, col=1)
 
     return fig
-Bloc de code Streamlit mis à jour :
-Python
-
-
 # Graphiques Comparatifs avec départ à 0 et sous-graphiques empilés
 if ad_sp500 is not None and not sp_close.empty and not ndx_close.empty:
     st.markdown("---")
