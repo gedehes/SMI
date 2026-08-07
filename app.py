@@ -616,7 +616,15 @@ def creerd_graphique_market_breadth(
       zerolinewidth=1,
       zerolinecolor="#666666",
   )
+# Ligne 1112 : Graphique de gauche (MM20 par défaut ou explicite)
+fig20 = creerd_graphique_market_breadth(
+    sp_close, ndx_close, ad_sp500, n_jours=20, mm_window=20
+)
 
+# Graphique de droite (FORCÉ en MM60)
+fig60 = creerd_graphique_market_breadth(
+    sp_close, ndx_close, ad_sp500, n_jours=60, mm_window=60
+)
   return fig
 
 # ==============================================================================
