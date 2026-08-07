@@ -482,20 +482,11 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-
-
 # --- FONCTION DE CRÉATION DU GRAPHIQUE MARKET BREADTH ---
 def creerd_graphique_market_breadth(
     sp_close, ndx_close, ad_line, n_jours, mm_window=20
 ):
-  """Génère un graphique à 2 panneaux avec une moyenne mobile sur la ligne A/D.
-
-  Paramètres :
-  - mm_window : 20 par défaut (graphe de gauche), à passer à 60 pour celui de
-  droite.
-  """
+  """Génère un graphique à 2 panneaux avec une moyenne mobile sur la ligne A/D."""
   # 1. Calcul de la MM sur l'historique complet pour éviter les NaN au début
   ad_mm_full = ad_line.rolling(window=mm_window).mean()
 
@@ -525,7 +516,7 @@ def creerd_graphique_market_breadth(
   ad_zero = ad_s - ad_t0
   ad_mm_zero = ad_mm_s - ad_t0
 
-  # 5. Figure subplots
+  # 5. Figure subplots (2 panneaux verticaux)
   fig = make_subplots(
       rows=2,
       cols=1,
@@ -534,7 +525,7 @@ def creerd_graphique_market_breadth(
       row_heights=[0.65, 0.35],
   )
 
-  # Haut : Indices
+  # Panneau 1 (Haut) : Indices (%)
   fig.add_trace(
       go.Scatter(
           x=sp_zero.index,
@@ -559,7 +550,7 @@ def creerd_graphique_market_breadth(
       col=1,
   )
 
-  # Bas : Ligne A/D + MM
+  # Panneau 2 (Bas) : Ligne A/D + MM sous le graphique principal
   fig.add_trace(
       go.Scatter(
           x=ad_zero.index,
@@ -624,49 +615,6 @@ def creerd_graphique_market_breadth(
   return fig
 
 
-# ==============================================================================
-# APPELS EXTERNES (HORS DE LA FONCTION)
-# ==============================================================================
-
-# Graphique de gauche (MM20)
-fig20 = creerd_graphique_market_breadth(
-    sp_close, ndx_close, ad_sp500, n_jours=20, mm_window=20
-)
-
-# Graphique de droite (FORCÉ en MM60)
-fig60 = creerd_graphique_market_breadth(
-    sp_close, ndx_close, ad_sp500, n_jours=60, mm_window=60
-)
-
-# ==============================================================================
-# INTEGRATION & AFFICHAGE CÔTÉ À CÔTÉ (STREAMLIT)
-# ==============================================================================
-def afficher_module_breadth(sp_close, ndx_close, ad_line, n_jours=60):
-  col_gauche, col_droite = st.columns(2)
-
-  # --- GRAPHIC GAUCHE : FORCÉ EN MM20 ---
-  with col_gauche:
-    fig_gauche = creerd_graphique_market_breadth(
-        sp_close=sp_close,
-        ndx_close=ndx_close,
-        ad_line=ad_line,
-        n_jours=n_jours,
-        mm_window=20,  # Explicitly set to 20
-    )
-    if fig_gauche:
-      st.plotly_chart(fig_gauche, use_container_width=True)
-
-  # --- GRAPHIC DROITE : FORCÉ EN MM60 ---
-  with col_droite:
-    fig_droite = creerd_graphique_market_breadth(
-        sp_close=sp_close,
-        ndx_close=ndx_close,
-        ad_line=ad_line,
-        n_jours=n_jours,
-        mm_window=60,  # Explicitly set to 60
-    )
-    if fig_droite:
-      st.plotly_chart(fig_droite, use_container_width=True)
 # --- INDICATEURS AVANCÉS ---
 def calculer_indicateurs_techniques_avances(ticker_list):
   results = []
@@ -1119,23 +1067,33 @@ with tab3:
           )
           st.caption(
               "💡 **Interprétation** : Chaque série démarre à **0** au début de"
-              " la période. L'axe de gauche mesure la variation en **%** des"
-              " deux indices, tandis que l'axe de droite mesure le cumul net de"
-              " la **Ligne Avance-Baisse** sans déformer les échelles."
+              " la période. Le panneau du haut mesure la variation en **%** des"
+              " indices, tandis que le panneau du bas affiche la **Ligne"
+              " Avance-Baisse** et sa moyenne mobile."
           )
 
           col_chart1, col_chart2 = st.columns(2)
 
+          # --- GAUCHE : MM20 (sur 20 jours) ---
           with col_chart1:
             fig20 = creerd_graphique_market_breadth(
-                sp_close, ndx_close, ad_sp500, 20
+                sp_close=sp_close,
+                ndx_close=ndx_close,
+                ad_line=ad_sp500,
+                n_jours=20,
+                mm_window=20,  # MM20
             )
             if fig20:
               st.plotly_chart(fig20, use_container_width=True)
 
+          # --- DROITE : MM60 (sur 60 jours) ---
           with col_chart2:
             fig60 = creerd_graphique_market_breadth(
-                sp_close, ndx_close, ad_sp500, 60
+                sp_close=sp_close,
+                ndx_close=ndx_close,
+                ad_line=ad_sp500,
+                n_jours=60,
+                mm_window=60,  # MM60
             )
             if fig60:
               st.plotly_chart(fig60, use_container_width=True)
