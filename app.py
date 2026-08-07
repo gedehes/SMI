@@ -482,8 +482,10 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
-# --- FONCTION GRAPHIQUE PLOTLY LISIBLE (DOUBLE AXE Y, DEPART 0) ---
-def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
+# --- FONCTION GRAPHIQUE PLOTLY (DEUX PANNEAUX SUPERPOSÉS) ---
+def creerd_graphique_market_breadth(
+    sp_close, ndx_close, ad_line, n_jours, mm_window=20
+):
   sp_sub = sp_close.tail(n_jours)
   ndx_sub = ndx_close.tail(n_jours)
   ad_sub = ad_line.tail(n_jours)
@@ -498,14 +500,24 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
   ndx_s = ndx_sub.loc[common_idx]
   ad_s = ad_sub.loc[common_idx]
 
-  # Normalisation : tout démarre à 0 au premier jour de la fenêtre
+  # Normalisation : départ à 0
   sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
   ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
   ad_zero = ad_s - ad_s.iloc[0]
 
-  fig = make_subplots(specs=[[{"secondary_y": True}]])
+  # Calcul de la Moyenne Mobile (MM20 ou MM60) sur la Ligne A/D
+  ad_mm = ad_zero.rolling(window=mm_window).mean()
 
-  # Axe Gauche : Indices (%)
+  # Création de 2 panneaux verticaux (65% haut / 35% bas) avec axe X partagé
+  fig = make_subplots(
+      rows=2,
+      cols=1,
+      shared_xaxes=True,
+      vertical_spacing=0.08,
+      row_heights=[0.65, 0.35],
+  )
+
+  # --- PANNEAU HAUT (Row 1) : Indices (%) ---
   fig.add_trace(
       go.Scatter(
           x=sp_zero.index,
@@ -514,7 +526,8 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
           line=dict(color="#29b6f6", width=2),
           hovertemplate="S&P 500: <b>%{y:+.2f}%</b><extra></extra>",
       ),
-      secondary_y=False,
+      row=1,
+      col=1,
   )
 
   fig.add_trace(
@@ -525,25 +538,43 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
           line=dict(color="#ab47bc", width=2),
           hovertemplate="NASDAQ 100: <b>%{y:+.2f}%</b><extra></extra>",
       ),
-      secondary_y=False,
+      row=1,
+      col=1,
   )
 
-  # Axe Droit : Ligne Avance-Baisse (Cumul net depuis T0)
+  # --- PANNEAU BAS (Row 2) : Ligne A/D + MM ---
   fig.add_trace(
       go.Scatter(
           x=ad_zero.index,
           y=ad_zero,
-          name="Ligne A/D (Net)",
-          line=dict(color="#ff7043", width=2, dash="dot"),
+          name="Ligne A/D",
+          line=dict(color="#ff7043", width=2),
           hovertemplate="Ligne A/D Net: <b>%{y:+d}</b><extra></extra>",
       ),
-      secondary_y=True,
+      row=2,
+      col=1,
+  )
+
+  fig.add_trace(
+      go.Scatter(
+          x=ad_mm.index,
+          y=ad_mm,
+          name=f"MM{mm_window} A/D",
+          line=dict(color="#ffa726", width=1.5, dash="dash"),
+          hovertemplate=(
+              f"MM{mm_window} A/D: <b>%{{y:+.2f}}</b><extra></extra>"
+          ),
+      ),
+      row=2,
+      col=1,
   )
 
   fig.update_layout(
       title=dict(
-          text=f"📊 Performance Relative & A/D — {n_jours} Derniers Jours"
-          " (Départ à 0)",
+          text=(
+              f"📊 Performance Relative & A/D (MM{mm_window}) — {n_jours}"
+              " Derniers Jours"
+          ),
           font=dict(size=14),
       ),
       hovermode="x unified",
@@ -551,26 +582,29 @@ def creerd_graphique_market_breadth(sp_close, ndx_close, ad_line, n_jours):
       legend=dict(
           orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
       ),
-      height=400,
+      height=500,
   )
 
+  # Axes Y
   fig.update_yaxes(
-      title_text="Variation Indices (%)",
-      secondary_y=False,
+      title_text="Indices (%)",
+      row=1,
+      col=1,
       zeroline=True,
       zerolinewidth=1,
       zerolinecolor="#666666",
   )
+
   fig.update_yaxes(
-      title_text="Ligne A/D (Titres Net)",
-      secondary_y=True,
+      title_text="A/D Net",
+      row=2,
+      col=1,
       zeroline=True,
       zerolinewidth=1,
       zerolinecolor="#666666",
   )
 
   return fig
-
 
 # --- INDICATEURS AVANCÉS ---
 def calculer_indicateurs_techniques_avances(ticker_list):
