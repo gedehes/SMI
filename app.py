@@ -380,14 +380,18 @@ def calculer_ordres_entree(ticker_list):
 # --- MARKET BREADTH ---
 def calculer_market_breadth(ticker_list, index_name):
   try:
-    data = yf.download(ticker_list, period="1y", interval="1d", progress=False)
+    # Utilisation de period="2y" pour avoir un historique suffisant (>252 séances)
+    data = yf.download(ticker_list, period="2y", interval="1d", progress=False)
     if data.empty:
       return None, None
+
+    # Nettoyage des lignes vides (ex: week-ends ou jours fériés)
+    data = data.dropna(how="all")
 
     if isinstance(data.columns, pd.MultiIndex):
       close_data = data["Close"].dropna(how="all", axis=1)
       high_data = data["High"].dropna(how="all", axis=1)
-      low_data = data[["Low"]].dropna(how="all", axis=1)
+      low_data = data["Low"].dropna(how="all", axis=1)
     else:
       close_data = data[["Close"]].dropna(how="all", axis=1)
       high_data = data[["High"]].dropna(how="all", axis=1)
@@ -432,9 +436,9 @@ def calculer_market_breadth(ticker_list, index_name):
     avances_nettes = avances - baisses
     ratio_ad = avances / baisses if baisses > 0 else avances
 
-    # 4. NH / NL
-    high_52w = high_data.rolling(window=252).max()
-    low_52w = low_data.rolling(window=252).min()
+    # 4. NH / NL (utilisation de min_periods=1 pour éviter tout NaN sur le week-end)
+    high_52w = high_data.rolling(window=252, min_periods=1).max()
+    low_52w = low_data.rolling(window=252, min_periods=1).min()
 
     nh_today = int((high_data.iloc[-1] >= high_52w.iloc[-1]).sum())
     nl_today = int((low_data.iloc[-1] <= low_52w.iloc[-1]).sum())
@@ -1033,9 +1037,21 @@ with tab3:
             ),
         ]
 
+        # Ajout de la consigne de vérification sous le titre TRADING OK
+        sous_titre_verification = ""
+        if trading_ok:
+          sous_titre_verification = (
+              "<p style='margin: 0 0 12px 0; font-size: 13px; color:"
+              " #118d57; font-weight: bold;'>"
+              "Vérifier : Les indices doivent monter et la courbe brute A/D"
+              " doivent être synchronisés (pas de divergence baissière),"
+              " lignes A/D supérieures à MM20 et MM60</p>"
+          )
+
         html_banner = f"""
         <div style='text-align: center; background-color: {status_bg}; padding: 16px; border-radius: 8px; margin-bottom: 20px; border: 2px solid {status_color};'>
-            <h2 style='color: {status_color}; margin: 0 0 12px 0;'>{status_title}</h2>
+            <h2 style='color: {status_color}; margin: 0 0 8px 0;'>{status_title}</h2>
+            {sous_titre_verification}
             <ul style='list-style-type: none; padding-left: 0; font-size: 13px; display: inline-block; text-align: left; margin: 0;'>
                 {''.join(html_items)}
             </ul>
