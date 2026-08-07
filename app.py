@@ -482,14 +482,26 @@ def calculer_market_breadth(ticker_list, index_name):
     return None, None
 
 
-# --- FONCTION GRAPHIQUE PLOTLY (DEUX PANNEAUX SUPERPOSÉS) ---
+# --- FONCTION DE CRÉATION DU GRAPHIQUE MARKET BREADTH ---
 def creerd_graphique_market_breadth(
     sp_close, ndx_close, ad_line, n_jours, mm_window=20
 ):
+  """Génère un graphique à 2 panneaux :
+
+  - Panneau 1 (Haut) : Performance relative S&P 500 & NASDAQ 100 (%)
+  - Panneau 2 (Bas)  : Ligne Avance-Baisse (A/D) sous le graphe avec sa Moyenne
+  Mobile (MM)
+  """
+  # 1. Calcul de la Moyenne Mobile sur la SÉRIE COMPLÈTE (évite le trou de calcul au début)
+  ad_mm_full = ad_line.rolling(window=mm_window).mean()
+
+  # 2. Découpage selon la fenêtre temporelle demandée (n_jours)
   sp_sub = sp_close.tail(n_jours)
   ndx_sub = ndx_close.tail(n_jours)
   ad_sub = ad_line.tail(n_jours)
+  ad_mm_sub = ad_mm_full.tail(n_jours)
 
+  # 3. Intersections des dates communes
   common_idx = sp_sub.index.intersection(ndx_sub.index).intersection(
       ad_sub.index
   )
@@ -499,16 +511,20 @@ def creerd_graphique_market_breadth(
   sp_s = sp_sub.loc[common_idx]
   ndx_s = ndx_sub.loc[common_idx]
   ad_s = ad_sub.loc[common_idx]
+  ad_mm_s = ad_mm_sub.loc[common_idx]
 
-  # Normalisation : départ à 0
+  # 4. Normalisation (Départ à 0 au premier jour de la fenêtre sélectionnée)
   sp_zero = ((sp_s / sp_s.iloc[0]) - 1) * 100
   ndx_zero = ((ndx_s / ndx_s.iloc[0]) - 1) * 100
-  ad_zero = ad_s - ad_s.iloc[0]
 
-  # Calcul de la Moyenne Mobile (MM20 ou MM60) sur la Ligne A/D
-  ad_mm = ad_zero.rolling(window=mm_window).mean()
+  # Point de référence initial (T0) pour l'A/D Line
+  ad_t0 = ad_s.iloc[0]
+  ad_zero = ad_s - ad_t0
+  ad_mm_zero = (
+      ad_mm_s - ad_t0
+  )  # Décale la MM du même montant pour conserver l'écart relatif
 
-  # Création de 2 panneaux verticaux (65% haut / 35% bas) avec axe X partagé
+  # 5. Création des subplots (2 panneaux verticaux à axe X partagé)
   fig = make_subplots(
       rows=2,
       cols=1,
@@ -542,7 +558,7 @@ def creerd_graphique_market_breadth(
       col=1,
   )
 
-  # --- PANNEAU BAS (Row 2) : Ligne A/D + MM ---
+  # --- PANNEAU BAS (Row 2) : Ligne A/D + MM sous le graphique ---
   fig.add_trace(
       go.Scatter(
           x=ad_zero.index,
@@ -557,8 +573,8 @@ def creerd_graphique_market_breadth(
 
   fig.add_trace(
       go.Scatter(
-          x=ad_mm.index,
-          y=ad_mm,
+          x=ad_mm_zero.index,
+          y=ad_mm_zero,
           name=f"MM{mm_window} A/D",
           line=dict(color="#ffa726", width=1.5, dash="dash"),
           hovertemplate=(
@@ -569,10 +585,11 @@ def creerd_graphique_market_breadth(
       col=1,
   )
 
+  # 6. Mise en page
   fig.update_layout(
       title=dict(
           text=(
-              f"📊 Performance Relative & A/D (MM{mm_window}) — {n_jours}"
+              f"📊 Performance Relative & Ligne A/D (MM{mm_window}) — {n_jours}"
               " Derniers Jours"
           ),
           font=dict(size=14),
@@ -585,7 +602,7 @@ def creerd_graphique_market_breadth(
       height=500,
   )
 
-  # Axes Y
+  # Ajustement des axes Y
   fig.update_yaxes(
       title_text="Indices (%)",
       row=1,
